@@ -78,6 +78,23 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Save to SQLite Database
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+
+    # Check if this exact title already exists (case-insensitive check)
+    cursor.execute("SELECT user, rating FROM watch_logs WHERE LOWER(title) = LOWER(?)", (official_title,))
+    existing_entry = cursor.fetchone()
+
+    if existing_entry:
+        existing_user, existing_rating = existing_entry
+        conn.close() # Close connection early
+        
+        # Friendly warning so your friends don't spam the database
+        await update.message.reply_text(
+            f"⚠️ *{official_title}* is already on the dashboard!\n"
+            f"It was logged by *{existing_user}* with a rating of {existing_rating}."
+        )
+        return
+
+
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
     cursor.execute(
         "INSERT INTO watch_logs (user, title, rating, date, content_type, poster) VALUES (?, ?, ?, ?, ?, ?)",
