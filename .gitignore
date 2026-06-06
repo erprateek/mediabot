@@ -1,0 +1,33 @@
+# --- Environment / Secrets ---
+# Never commit your Telegram or OMDb API keys!
+.env
+*.env
+
+# --- Database / Persistence ---
+# Keeps your friends' logged data local to your Mac Mini
+movies.db
+movies.db-journal
+
+# --- Python Virtual Environments ---
+# No need to track downloaded packages (FastAPI, python-telegram-bot, etc.)
+.venv/
+venv/
+env/
+ENV/
+bin/
+lib/
+include/
+
+# --- Python Caching ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# --- macOS Specific Files ---
+# Stops Mac folder layout configurations from cluttering git
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
