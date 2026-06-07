@@ -21,17 +21,17 @@ class WatchmodeClient:
 
     def fetch_platforms(self, imdb_id: Optional[str], title_query: str = "") -> str:
         """
-        Returns a human-readable streaming string, e.g.
-          '📺 Stream on: Netflix, Hulu'
-          '💰 Rent/Buy on: Amazon, Apple TV'
-          'Not currently streaming anywhere'
+        Returns a raw comma-separated list of platform names, e.g.
+          'Netflix,Hulu'
+          'Amazon,Apple TV+'
+          '' (empty string when nothing is found)
         Never raises.
         """
         results = self._search(imdb_id, title_query)
         watchmode_id = self._extract_id(results)
 
         if watchmode_id is None:
-            return "Streaming platform reference missed"
+            return ""
 
         return self._resolve_sources(watchmode_id)
 
@@ -137,12 +137,11 @@ class WatchmodeClient:
                 elif s_type in ("rent", "buy") and name not in rent_platforms:
                     rent_platforms.append(name)
 
-            if sub_platforms:
-                return "📺 Stream on: " + ", ".join(sub_platforms[:2])
-            if rent_platforms:
-                return "💰 Rent/Buy on: " + ", ".join(rent_platforms[:2])
+            # Prefer subscription/free; fall back to rent/buy. Cap at 4 total.
+            platforms = sub_platforms[:4] or rent_platforms[:4]
+            return ",".join(platforms)
 
         except Exception as exc:
             print(f"Watchmode source retrieval error: {exc}")
 
-        return "Not currently streaming anywhere"
+        return ""

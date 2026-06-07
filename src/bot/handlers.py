@@ -79,7 +79,8 @@ class BotHandlers:
         self.db.insert_entry(entry)
 
         type_emoji = "🎬" if meta.content_type == "movie" else "📺"
-        caption = f"💾 *Saved {type_emoji} {meta.title}* ({rating})!\n\n_{platforms}_"
+        platform_display = ("📺 " + ", ".join(platforms.split(","))) if platforms else "Not currently streaming anywhere"
+        caption = f"💾 *Saved {type_emoji} {meta.title}* ({rating})!\n\n_{platform_display}_"
 
         if meta.poster:
             try:
