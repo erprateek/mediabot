@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "mediabot"
+version = "0.1.0"
+description = "Telegram bot + FastAPI dashboard for tracking watched media."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/migrations/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 70
