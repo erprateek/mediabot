@@ -17,6 +17,7 @@ from src.config import config
 from src.api.dashboard import create_app
 from src.bot.handlers import BotHandlers, register_handlers
 from src.db.database import Database
+from src.services.ollama import OllamaClient
 from src.services.omdb import OmdbClient
 from src.services.watchmode import WatchmodeClient
 
@@ -34,10 +35,13 @@ async def weekly_streaming_refresh(db: Database, watchmode: WatchmodeClient, int
 
 
 def build_telegram_app(
-    db: Database, omdb: OmdbClient, watchmode: WatchmodeClient
+    db: Database,
+    omdb: OmdbClient,
+    watchmode: WatchmodeClient,
+    ollama: OllamaClient,
 ) -> Application:
     tg_app = Application.builder().token(config.telegram_token).build()
-    handlers = BotHandlers(db=db, omdb=omdb, watchmode=watchmode)
+    handlers = BotHandlers(db=db, omdb=omdb, watchmode=watchmode, ollama=ollama)
     register_handlers(tg_app, handlers)
     return tg_app
 
@@ -45,14 +49,19 @@ def build_telegram_app(
 def main() -> None:
     config.validate()
 
-    db = Database(db_file=config.db_file)
-    omdb = OmdbClient(api_key=config.omdb_api_key)
+    db       = Database(db_file=config.db_file)
+    omdb     = OmdbClient(api_key=config.omdb_api_key)
     watchmode = WatchmodeClient(api_key=config.watchmode_api_key)
-    tg_app = build_telegram_app(db, omdb, watchmode)
+    ollama   = OllamaClient(
+        base_url=config.ollama_base_url,
+        model=config.ollama_model,
+    )
+
+    tg_app = build_telegram_app(db, omdb, watchmode, ollama)
 
     @asynccontextmanager
     async def lifespan(_):
-        print("🤖 Starting Telegram bot polling...")
+        print(f"🤖 Starting Telegram bot (Ollama model: {config.ollama_model})...")
         await tg_app.initialize()
         await tg_app.start()
         polling_task = asyncio.create_task(tg_app.updater.start_polling())
