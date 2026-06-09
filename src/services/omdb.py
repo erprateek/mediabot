@@ -1,9 +1,9 @@
 """
 src/services/omdb.py
-OMDb API integration — fetches media metadata.
+OMDb API integration — fetches media metadata including genres.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import requests
@@ -11,10 +11,11 @@ import requests
 
 @dataclass
 class MediaMeta:
-    content_type: str   # 'movie' | 'tv'
+    content_type: str       # 'movie' | 'tv'
     poster: str
     title: str
     imdb_id: Optional[str]
+    genres: list[str] = field(default_factory=list)  # e.g. ['Action', 'Drama']
 
 
 class OmdbClient:
@@ -43,11 +44,18 @@ class OmdbClient:
                 poster = data.get("Poster", "")
                 if poster == "N/A":
                     poster = ""
+                raw_genres = data.get("Genre", "")
+                genres = (
+                    [g.strip() for g in raw_genres.split(",") if g.strip()]
+                    if raw_genres and raw_genres != "N/A"
+                    else []
+                )
                 return MediaMeta(
                     content_type=content_type,
                     poster=poster,
                     title=data.get("Title", title_query),
                     imdb_id=data.get("imdbID"),
+                    genres=genres,
                 )
         except Exception as exc:  # pragma: no cover
             print(f"OMDb error for '{title_query}': {exc}")
@@ -57,4 +65,5 @@ class OmdbClient:
             poster="",
             title=title_query,
             imdb_id=None,
+            genres=[],
         )

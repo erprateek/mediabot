@@ -24,6 +24,12 @@ class Config:
     refresh_interval_seconds: int = field(
         default_factory=lambda: int(os.getenv("REFRESH_INTERVAL_SECONDS", str(7 * 24 * 60 * 60)))
     )
+    ollama_base_url: str = field(
+        default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    )
+    ollama_model: str = field(
+        default_factory=lambda: os.getenv("OLLAMA_MODEL", "gemma4:12b-it-qat")
+    )
 
     def validate(self) -> None:
         """Raise ValueError if any required key is missing."""

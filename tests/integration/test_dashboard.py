@@ -1,42 +1,38 @@
 """
 tests/integration/test_dashboard.py
-Uses FastAPI's TestClient — no live server needed.
 """
 
 from datetime import datetime
-
 import pytest
 from fastapi.testclient import TestClient
 
 from src.api.dashboard import create_app, build_dashboard_html
-from src.db.database import Database, WatchEntry
+from src.db.database import Database, WatchEntry, Rating
 
 
-def _entry(title: str, content_type: str = "movie") -> WatchEntry:
+def _entry(title: str, content_type: str = "movie", genres: str = "Action") -> WatchEntry:
     return WatchEntry(
-        user="Alice",
-        title=title,
-        rating="8/10",
+        user="Alice", title=title,
         date=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        content_type=content_type,
-        poster="",
-        imdb_id="tt0000001",
-        platforms="📺 Stream on: Netflix",
+        content_type=content_type, poster="",
+        imdb_id="tt0000001", platforms="Netflix",
+        genres=genres,
     )
+
+def _rating(title: str, user: str = "Alice", score: float = 4.0) -> Rating:
+    return Rating(title=title, user=user, score=score,
+                  date=datetime.now().strftime("%Y-%m-%d %H:%M"))
 
 
 @pytest.fixture
 def client(tmp_db):
-    app = create_app(tmp_db)
-    return TestClient(app), tmp_db
+    return TestClient(create_app(tmp_db)), tmp_db
 
 
 class TestHealthEndpoint:
     def test_health_ok(self, client):
         tc, _ = client
-        resp = tc.get("/health")
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        assert tc.get("/health").json() == {"status": "ok"}
 
 
 class TestDashboard:
@@ -44,33 +40,50 @@ class TestDashboard:
         tc, _ = client
         resp = tc.get("/")
         assert resp.status_code == 200
-        assert "No movies logged yet" in resp.text
-        assert "No TV shows logged yet" in resp.text
+        assert "Nothing logged yet" in resp.text
 
-    def test_movie_appears_in_movies_grid(self, client):
+    def test_movie_appears_in_page(self, client):
         tc, db = client
         db.insert_entry(_entry("Inception", "movie"))
-        resp = tc.get("/")
-        assert "Inception" in resp.text
+        assert "Inception" in tc.get("/").text
 
-    def test_tv_show_appears_in_tv_grid(self, client):
+    def test_tv_appears_in_page(self, client):
         tc, db = client
         db.insert_entry(_entry("The Wire", "tv"))
+        assert "The Wire" in tc.get("/").text
+
+    def test_genre_filter_buttons_rendered(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune", "movie", genres="Sci-Fi,Action"))
         resp = tc.get("/")
-        assert "The Wire" in resp.text
+        assert "Sci-Fi" in resp.text
+        assert "Action" in resp.text
+
+    def test_avg_rating_shown_when_rated(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune"))
+        db.upsert_rating(_rating("Dune", "Alice", 4.0))
+        db.upsert_rating(_rating("Dune", "Bob",   5.0))
+        resp = tc.get("/")
+        assert "4.5" in resp.text
 
     def test_html_content_type(self, client):
         tc, _ = client
-        resp = tc.get("/")
-        assert "text/html" in resp.headers["content-type"]
+        assert "text/html" in tc.get("/").headers["content-type"]
 
 
 class TestBuildDashboardHtml:
-    def test_no_entries_shows_no_data(self):
-        html = build_dashboard_html([])
-        assert "No movies logged yet" in html
-        assert "No TV shows logged yet" in html
+    def test_no_entries_shows_no_data(self, tmp_db):
+        html = build_dashboard_html(tmp_db.all_rated_entries())
+        assert "Nothing logged yet" in html
 
-    def test_avatar_is_first_letter_of_user(self):
-        html = build_dashboard_html([_entry("Dune")])
-        assert "<div class=\"avatar\">A</div>" in html
+    def test_unrated_chip_shows_plus_rate(self, tmp_db):
+        tmp_db.insert_entry(_entry("Oppenheimer"))
+        html = build_dashboard_html(tmp_db.all_rated_entries())
+        assert "+ rate" in html
+
+    def test_rated_chip_shows_score(self, tmp_db):
+        tmp_db.insert_entry(_entry("Oppenheimer"))
+        tmp_db.upsert_rating(_rating("Oppenheimer", score=4.5))
+        html = build_dashboard_html(tmp_db.all_rated_entries())
+        assert "4.5" in html
