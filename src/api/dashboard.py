@@ -27,19 +27,33 @@ FALLBACK_POSTER = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?
 # ---------------------------------------------------------------------------
 # Platform badge config
 # ---------------------------------------------------------------------------
+_LOGOS = "/static/logos"
+
 _PLATFORMS: dict[str, dict] = {
-    "Netflix":     {"bg": "#E50914", "fg": "#fff",  "label": "N"},
-    "Hulu":        {"bg": "#1CE783", "fg": "#000",  "label": "H"},
-    "Max":         {"bg": "#002BE7", "fg": "#fff",  "label": "max"},
-    "HBO Max":     {"bg": "#002BE7", "fg": "#fff",  "label": "max"},
+    "Netflix":     {"bg": "#E50914", "fg": "#fff",  "label": "N",
+                    "logo": f"{_LOGOS}/netflix.svg"},
+    "Hulu":        {"bg": "#1CE783", "fg": "#000",  "label": "H",
+                    "logo": f"{_LOGOS}/hulu.svg"},
+    "Max":         {"bg": "#002BE7", "fg": "#fff",  "label": "max",
+                    "logo": f"{_LOGOS}/max.svg"},
+    "HBO Max":     {"bg": "#002BE7", "fg": "#fff",  "label": "max",
+                    "logo": f"{_LOGOS}/max.svg"},
+    "HBO":         {"bg": "#9E7DFF", "fg": "#fff",  "label": "HBO",
+                    "logo": f"{_LOGOS}/hbo.svg"},
     "Disney+":     {"bg": "#113CCF", "fg": "#fff",  "label": "D+"},
-    "Apple TV+":   {"bg": "#1c1c1e", "fg": "#fff",  "label": "▶"},
-    "Prime Video": {"bg": "#00A8E1", "fg": "#fff",  "label": "P"},
-    "Paramount+":  {"bg": "#0064FF", "fg": "#fff",  "label": "P+"},
-    "Peacock":     {"bg": "#333",    "fg": "#fff",  "label": "Pc"},
-    "Tubi":        {"bg": "#FA2D27", "fg": "#fff",  "label": "T"},
-    "Showtime":    {"bg": "#CC0000", "fg": "#fff",  "label": "SHO"},
-    "Starz":       {"bg": "#111",    "fg": "#fff",  "label": "★"},
+    "Apple TV+":   {"bg": "#F5F5F7", "fg": "#000",  "label": "tv",
+                    "logo": f"{_LOGOS}/appletv.svg"},
+    "Prime Video": {"bg": "#00A8E1", "fg": "#fff",  "label": "P",
+                    "logo": f"{_LOGOS}/primevideo.svg"},
+    "Paramount+":  {"bg": "#0064FF", "fg": "#fff",  "label": "P+",
+                    "logo": f"{_LOGOS}/paramountplus.svg"},
+    "Peacock":     {"bg": "#FDB813", "fg": "#fff",  "label": "Pc"},
+    "Tubi":        {"bg": "#FA2D27", "fg": "#fff",  "label": "T",
+                    "logo": f"{_LOGOS}/tubi.svg"},
+    "Showtime":    {"bg": "#CC0000", "fg": "#fff",  "label": "SHO",
+                    "logo": f"{_LOGOS}/showtime.svg"},
+    "Starz":       {"bg": "#FFFFFF", "fg": "#000",  "label": "★",
+                    "logo": f"{_LOGOS}/starz.svg"},
 }
 
 _AVATAR_COLORS = ["#534AB7", "#0F6E56", "#993C1D", "#185FA5",
@@ -67,7 +81,10 @@ def _avatar_color(name: str) -> str:
 
 def _picon(name: str) -> dict:
     p = _PLATFORMS.get(name, {"bg": "#888", "fg": "#fff", "label": name[:2].upper()})
-    return {"name": name, "bg": p["bg"], "fg": p["fg"], "label": p["label"]}
+    return {
+        "name": name, "bg": p["bg"], "fg": p["fg"],
+        "label": p["label"], "logo": p.get("logo", ""),
+    }
 
 
 def _entry_to_dict(re: RatedEntry) -> dict:
@@ -90,6 +107,10 @@ def _entry_to_dict(re: RatedEntry) -> dict:
         "ratings":      ratings_payload,
         "added_by":     e.user,
         "date":         e.date,
+        # OMDb enrichment
+        "plot":         e.plot,
+        "actors":       _parse_list(e.actors),
+        "director":     e.director,
         # Render-only fields
         "avg":          avg,
         "first_user":   first_user,

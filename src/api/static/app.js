@@ -6,16 +6,23 @@ function avatarColor(name){
   return AVATAR_COLORS[Math.abs(h)%AVATAR_COLORS.length];
 }
 
-function piconHTML(name, size=18){
+function piconHTML(name, size=22){
   const p = window.PLATFORMS?.[name] || {bg:"#888", fg:"#fff", label: name.slice(0,2).toUpperCase()};
   const el = document.createElement("div");
   el.className = "picon";
   el.style.width = size + "px";
   el.style.height = size + "px";
-  el.style.background = p.bg;
-  el.style.color = p.fg;
   el.title = name;
-  el.textContent = p.label;
+  if(p.logo){
+    // Brand mark: recolor the SVG via CSS mask
+    el.style.background = p.bg;
+    el.style.webkitMask = `url(${p.logo}) center / contain no-repeat`;
+    el.style.mask = `url(${p.logo}) center / contain no-repeat`;
+  }else{
+    el.style.background = p.bg;
+    el.style.color = p.fg;
+    el.textContent = p.label;
+  }
   return el;
 }
 
@@ -27,6 +34,13 @@ function starsHTML(avg){
     else                   s += `<span class="star empty">★</span>`;
   }
   return s;
+}
+
+// Fill a "label value" line; hide the whole line when the value is empty.
+function fillLine(lineId, valueId, value){
+  const v = (value || "").toString().trim();
+  document.getElementById(valueId).textContent = v;
+  document.getElementById(lineId).style.display = v ? "" : "none";
 }
 
 // ---------------------------------------------------------------- //
@@ -69,7 +83,29 @@ async function openModal(title){
 
   const platEl = document.getElementById("modal-platforms");
   platEl.innerHTML = "";
-  for(const p of item.platforms) platEl.appendChild(piconHTML(p, 16));
+  if(!item.platforms.length){
+    const none = document.createElement("span");
+    none.className = "no-platforms";
+    none.textContent = "Not currently streaming";
+    platEl.appendChild(none);
+  } else {
+    for(const p of item.platforms){
+      const pill = document.createElement("div");
+      pill.className = "stream-pill";
+      pill.appendChild(piconHTML(p, 20));
+      const nm = document.createElement("span");
+      nm.textContent = p;
+      pill.appendChild(nm);
+      platEl.appendChild(pill);
+    }
+  }
+
+  fillLine("modal-director-line", "modal-director", item.director);
+  fillLine("modal-actors-line", "modal-actors", (item.actors || []).join(", "));
+
+  const plotEl = document.getElementById("modal-plot");
+  plotEl.textContent = item.plot || "";
+  plotEl.style.display = item.plot ? "" : "none";
 
   // Build 5→1 bar rows
   const byScore = {5:[],4:[],3:[],2:[],1:[]};
@@ -152,14 +188,26 @@ function showPage(id){
 }
 
 function filterGenre(btn){
-  // Scope filter to the grid inside the same page
+  // Multi-select: toggle tags per page; cards match ANY selected tag.
   const page = btn.closest(".page");
-  page.querySelectorAll(".gfbtn").forEach(b => b.classList.remove("active"));
-  btn.classList.add("active");
+  if(page._genreSel === undefined) page._genreSel = new Set();
+  const sel = page._genreSel;
   const genre = btn.dataset.genre;
+
+  if(genre === "all"){
+    sel.clear();
+  } else {
+    sel.has(genre) ? sel.delete(genre) : sel.add(genre);
+  }
+
+  page.querySelectorAll(".gfbtn").forEach(b => {
+    b.classList.toggle("active",
+      b.dataset.genre === "all" ? sel.size === 0 : sel.has(b.dataset.genre));
+  });
+
   page.querySelectorAll(".full-grid .card").forEach(card => {
-    if(genre === "all"){ card.classList.remove("hidden"); return; }
+    if(sel.size === 0){ card.classList.remove("hidden"); return; }
     const genres = JSON.parse(card.dataset.genres || "[]");
-    card.classList.toggle("hidden", !genres.includes(genre));
+    card.classList.toggle("hidden", !genres.some(g => sel.has(g)));
   });
 }

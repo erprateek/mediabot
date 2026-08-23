@@ -66,6 +66,9 @@ def _make_handlers(db, omdb_meta=None, platforms="Netflix", parsed: ParsedWatch 
     omdb.fetch.return_value = omdb_meta or MediaMeta(
         content_type="movie", poster="https://example.com/p.jpg",
         title="The Batman", imdb_id="tt1877830", genres=["Action", "Crime"],
+        plot="When a sadistic serial killer murders an elite family...",
+        actors=["Robert Pattinson", "Zoë Kravitz"],
+        director="Matt Reeves",
     )
     watchmode = MagicMock()
     watchmode.fetch_platforms.return_value = platforms
@@ -148,6 +151,54 @@ class TestWatchCommand:
         await h.watch(update, _make_context("Silent", "Film"))
         update.message.reply_text.assert_called()
         update.message.reply_photo.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_metadata_stored_on_new_entry(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        await h.watch(_make_update(), _make_context("The", "Batman"))
+        entry = tmp_db.find_by_title("The Batman")
+        assert entry.plot.startswith("When a sadistic serial killer")
+        assert entry.actors == "Robert Pattinson,Zoë Kravitz"
+        assert entry.director == "Matt Reeves"
+
+
+class TestRemoveCommand:
+    @pytest.mark.asyncio
+    async def test_remove_existing_title(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        await h.watch(_make_update(), _make_context("The", "Batman"))
+        assert tmp_db.find_by_title("The Batman") is not None
+
+        update = _make_update("Bob")
+        await h.remove(update, _make_context("The", "Batman"))
+
+        assert tmp_db.find_by_title("The Batman") is None
+        call_text = update.message.reply_text.call_args[0][0]
+        assert "removed" in call_text.lower()
+
+    @pytest.mark.asyncio
+    async def test_remove_deletes_ratings(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        await h.watch(_make_update(), _make_context("The", "Batman"))
+        await h.rate(_make_update(), _make_context("The", "Batman", "-", "4.5"))
+
+        await h.remove(_make_update(), _make_context("the", "batman"))
+        assert tmp_db.ratings_for_title("The Batman") == []
+
+    @pytest.mark.asyncio
+    async def test_remove_unknown_title(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.remove(update, _make_context("Ghost", "Movie"))
+        call_text = update.message.reply_text.call_args[0][0]
+        assert "isn't on the dashboard" in call_text
+
+    @pytest.mark.asyncio
+    async def test_remove_no_args_shows_usage(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.remove(update, _make_context())
+        assert "Format" in update.message.reply_text.call_args[0][0]
 
 
 class TestRateCommand:

@@ -52,6 +52,28 @@ class TestOmdbClient:
                          "Poster":"","imdbID":"tt0000001","Genre":"N/A"}).fetch("silent film")
         assert meta.genres == []
 
+    def test_plot_actors_director_extracted(self):
+        meta = _client({
+            "Response": "True", "Type": "movie", "Title": "The Batman",
+            "Poster": "", "imdbID": "tt1877830", "Genre": "Action",
+            "Plot": "When a sadistic serial killer leaves behind a cryptic trail...",
+            "Actors": "Robert Pattinson, Zoë Kravitz, Colin Farrell",
+            "Director": "Matt Reeves",
+        }).fetch("batman")
+        assert meta.plot.startswith("When a sadistic serial killer")
+        assert meta.actors == ["Robert Pattinson", "Zoë Kravitz", "Colin Farrell"]
+        assert meta.director == "Matt Reeves"
+
+    def test_na_plot_actors_director_normalised(self):
+        meta = _client({
+            "Response": "True", "Type": "movie", "Title": "Obscure Film",
+            "Poster": "", "imdbID": "tt0000009",
+            "Plot": "N/A", "Actors": "N/A", "Director": "N/A",
+        }).fetch("obscure film")
+        assert meta.plot == ""
+        assert meta.actors == []
+        assert meta.director == ""
+
     def test_missing_genre_returns_empty_list(self):
         meta = _client({"Response":"True","Type":"movie","Title":"No Genre",
                          "Poster":"","imdbID":"tt0000002"}).fetch("no genre")

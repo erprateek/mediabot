@@ -13,6 +13,9 @@ Commands
 /rate  [Title] - [0-5]    — explicitly add or update your rating for a title
                             that is already on the dashboard.
                             e.g. /rate The Batman - 4.5
+
+/remove [Title]           — delete a title (and its ratings) from the
+                            dashboard, e.g. when it was parsed incorrectly.
 """
 
 import asyncio
@@ -153,6 +156,9 @@ class BotHandlers:
             imdb_id=meta.imdb_id or "",
             platforms=platforms,
             genres=genres_str,
+            plot=meta.plot,
+            actors=",".join(meta.actors),
+            director=meta.director,
         )
         entry_id = await asyncio.to_thread(self.db.insert_entry, entry)
         if entry_id is None:
@@ -262,6 +268,47 @@ class BotHandlers:
         )
 
 
+    # ------------------------------------------------------------------ #
+    # /remove — delete a title (e.g. it was parsed incorrectly)            #
+    # ------------------------------------------------------------------ #
+
+    async def remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None:
+            return
+
+        user = update.message.from_user.first_name if update.message.from_user else "Unknown"
+        text = " ".join(context.args or [])
+
+        if not text:
+            await update.message.reply_text(
+                "Format: `/remove [Title]`\nExample: `/remove The Batman`",
+                parse_mode="Markdown",
+            )
+            return
+
+        existing = await asyncio.to_thread(self.db.find_by_title, text)
+        if not existing or existing.id is None:
+            await update.message.reply_text(
+                f"*{text}* isn't on the dashboard.",
+                parse_mode="Markdown",
+            )
+            return
+
+        deleted = await asyncio.to_thread(self.db.delete_entry, existing.id)
+        if deleted:
+            logger.info("'%s' removed by %s", existing.title, user)
+            await update.message.reply_text(
+                f"🗑 Removed *{existing.title}* from the dashboard.",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                f"Couldn't remove *{existing.title}* — try again.",
+                parse_mode="Markdown",
+            )
+
+
 def register_handlers(app: Application, handlers: BotHandlers) -> None:
     app.add_handler(CommandHandler("watch", handlers.watch))
     app.add_handler(CommandHandler("rate",  handlers.rate))
+    app.add_handler(CommandHandler("remove", handlers.remove))

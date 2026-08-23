@@ -20,6 +20,14 @@ class MediaMeta:
     title: str
     imdb_id: str | None
     genres: list[str] = field(default_factory=list)  # e.g. ['Action', 'Drama']
+    plot: str = ""
+    actors: list[str] = field(default_factory=list)  # e.g. ['Robert Pattinson', ...]
+    director: str = ""
+
+
+def _clean(value: str | None) -> str:
+    """OMDb returns the string 'N/A' for missing values."""
+    return "" if not value or value == "N/A" else value.strip()
 
 
 class OmdbClient:
@@ -49,13 +57,17 @@ class OmdbClient:
 
             if data.get("Response") == "True":
                 content_type = "tv" if data.get("Type") == "series" else "movie"
-                poster = data.get("Poster", "")
-                if poster == "N/A":
-                    poster = ""
+                poster = _clean(data.get("Poster"))
                 raw_genres = data.get("Genre", "")
                 genres = (
                     [g.strip() for g in raw_genres.split(",") if g.strip()]
-                    if raw_genres and raw_genres != "N/A"
+                    if _clean(raw_genres)
+                    else []
+                )
+                raw_actors = data.get("Actors", "")
+                actors = (
+                    [a.strip() for a in raw_actors.split(",") if a.strip()]
+                    if _clean(raw_actors)
                     else []
                 )
                 return MediaMeta(
@@ -64,6 +76,9 @@ class OmdbClient:
                     title=data.get("Title", title_query),
                     imdb_id=data.get("imdbID"),
                     genres=genres,
+                    plot=_clean(data.get("Plot")),
+                    actors=actors,
+                    director=_clean(data.get("Director")),
                 )
         except Exception as exc:  # pragma: no cover
             logger.error("OMDb error for '%s': %s", title_query, exc)

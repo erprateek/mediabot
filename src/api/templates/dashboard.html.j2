@@ -9,10 +9,18 @@
 </div>
 {%- endmacro %}
 
+{% macro picon(p, size) -%}
+{%- if p.logo -%}
+<div class="picon" style="width:{{ size }}px;height:{{ size }}px;background:{{ p.bg }};-webkit-mask:url({{ p.logo }}) center / contain no-repeat;mask:url({{ p.logo }}) center / contain no-repeat" title="{{ p.name }}"></div>
+{%- else -%}
+<div class="picon" style="width:{{ size }}px;height:{{ size }}px;background:{{ p.bg }};color:{{ p.fg }}" title="{{ p.name }}">{{ p.label }}</div>
+{%- endif -%}
+{%- endmacro %}
+
 {% macro pstrip(e) -%}
 {% if e.pstrip %}
 <div class="pstrip">
-  {%- for p in e.pstrip.icons %}<div class="picon" style="width:18px;height:18px;background:{{ p.bg }};color:{{ p.fg }}" title="{{ p.name }}">{{ p.label }}</div>{% endfor -%}
+  {%- for p in e.pstrip.icons %}{{ picon(p, 22) }}{% endfor -%}
   {% if e.pstrip.more %}<span class="more-count">+{{ e.pstrip.more }}</span>{% endif %}
 </div>
 {% endif %}
@@ -22,7 +30,7 @@
 {% if e.pbadges %}
 <div class="platform-badges">
   {%- for p in e.pbadges %}
-  <div class="pbadge"><div class="picon" style="width:13px;height:13px;background:{{ p.bg }};color:{{ p.fg }}">{{ p.label }}</div><span>{{ p.name }}</span></div>
+  <div class="pbadge">{{ picon(p, 15) }}<span>{{ p.name }}</span></div>
   {% endfor -%}
 </div>
 {% endif %}
@@ -119,9 +127,13 @@
       <div class="modal-info">
         <div class="modal-title"  id="modal-title"></div>
         <div class="modal-genres" id="modal-genres"></div>
+        <div class="modal-sub">Streaming</div>
         <div class="modal-platforms" id="modal-platforms"></div>
+        <p class="modal-line" id="modal-director-line"><span class="credit-label">Director</span> <span id="modal-director"></span></p>
+        <p class="modal-line" id="modal-actors-line"><span class="credit-label">Starring</span> <span id="modal-actors"></span></p>
       </div>
     </div>
+    <p class="modal-plot" id="modal-plot"></p>
     <div class="score-block">
       <div class="big-score" id="modal-score"></div>
       <div>

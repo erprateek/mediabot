@@ -106,6 +106,17 @@ class TestApiEntries:
         assert entry["genres"] == ["Sci-Fi", "Action"]
         assert entry["platforms"] == ["Netflix"]
 
+    def test_includes_metadata_fields(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Inception", genres="Sci-Fi"))
+        db.update_metadata(db.find_by_title("Inception").id,
+                           plot="A thief enters dreams.", actors="Leonardo DiCaprio",
+                           director="Christopher Nolan")
+        entry = tc.get("/api/entries").json()[0]
+        assert entry["plot"] == "A thief enters dreams."
+        assert entry["actors"] == ["Leonardo DiCaprio"]
+        assert entry["director"] == "Christopher Nolan"
+
     def test_includes_ratings_and_avg(self, client):
         tc, db = client
         db.insert_entry(_entry("Dune"))

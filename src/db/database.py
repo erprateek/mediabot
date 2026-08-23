@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass
@@ -34,6 +34,9 @@ class WatchEntry:
     imdb_id: str
     platforms: str      # comma-separated, e.g. "Netflix,Hulu"
     genres: str         # comma-separated, e.g. "Action,Drama"
+    plot: str = ""      # OMDb synopsis
+    actors: str = ""    # comma-separated cast
+    director: str = ""
     id: int | None = None
 
 
@@ -81,13 +84,18 @@ class Database:
                     poster        TEXT             DEFAULT '',
                     imdb_id       TEXT             DEFAULT '',
                     platforms     TEXT             DEFAULT '',
-                    genres        TEXT             DEFAULT ''
+                    genres        TEXT             DEFAULT '',
+                    plot          TEXT             DEFAULT '',
+                    actors        TEXT             DEFAULT '',
+                    director      TEXT             DEFAULT ''
                 )
             """)
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version < SCHEMA_VERSION:
+            if version < 2:
                 self._migrate_to_v2(conn)
-                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            if version < 3:
+                self._migrate_to_v3(conn)
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     @staticmethod
     def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -164,10 +172,20 @@ class Database:
     # Connection                                                           #
     # ------------------------------------------------------------------ #
 
+    def _migrate_to_v3(self, conn: sqlite3.Connection) -> None:
+        """v3: add OMDb enrichment columns (plot/actors/director)."""
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(watch_logs)")]
+        for col in ("plot", "actors", "director"):
+            if col not in cols:
+                conn.execute(
+                    f"ALTER TABLE watch_logs ADD COLUMN {col} TEXT DEFAULT ''"
+                )
+
     @contextmanager
     def _conn(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self.db_file)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             yield conn
             conn.commit()
@@ -187,11 +205,13 @@ class Database:
         with self._conn() as conn:
             cursor = conn.execute("""
                 INSERT OR IGNORE INTO watch_logs
-                    (user, title, date, content_type, poster, imdb_id, platforms, genres)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (user, title, date, content_type, poster, imdb_id,
+                     platforms, genres, plot, actors, director)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 entry.user, entry.title, entry.date, entry.content_type,
                 entry.poster, entry.imdb_id, entry.platforms, entry.genres,
+                entry.plot, entry.actors, entry.director,
             ))
             if cursor.rowcount > 0:
                 return cursor.lastrowid
@@ -225,6 +245,28 @@ class Database:
                 "UPDATE watch_logs SET platforms = ? WHERE id = ?",
                 (platforms, entry_id),
             )
+
+    def update_metadata(
+        self, entry_id: int, *, plot: str = "", actors: str = "", director: str = ""
+    ) -> None:
+        """Fill OMDb enrichment columns for an existing entry (backfills)."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE watch_logs SET plot = ?, actors = ?, director = ? WHERE id = ?",
+                (plot, actors, director, entry_id),
+            )
+
+    def delete_entry(self, entry_id: int) -> bool:
+        """Remove a title entirely. Ratings cascade via FK; also deleted
+        explicitly so removal works even if foreign_keys is unavailable.
+
+        Returns True when a row was deleted."""
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ratings WHERE entry_id = ?", (entry_id,))
+            cursor = conn.execute(
+                "DELETE FROM watch_logs WHERE id = ?", (entry_id,)
+            )
+            return cursor.rowcount > 0
 
     # ------------------------------------------------------------------ #
     # Reads                                                                #
@@ -311,4 +353,7 @@ class Database:
             imdb_id=row["imdb_id"],
             platforms=row["platforms"],
             genres=row["genres"] if "genres" in keys else "",
+            plot=row["plot"] if "plot" in keys else "",
+            actors=row["actors"] if "actors" in keys else "",
+            director=row["director"] if "director" in keys else "",
         )
