@@ -16,6 +16,7 @@ Commands
 """
 
 import asyncio
+import logging
 import re
 from typing import Optional
 from datetime import datetime
@@ -24,9 +25,12 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from src.db.database import Database, Rating, WatchEntry
+from src.services.errors import ExternalAPIError
 from src.services.ollama import OllamaClient
 from src.services.omdb import OmdbClient
 from src.services.watchmode import WatchmodeClient
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_rate_text(text: str) -> tuple[str, Optional[float]]:
@@ -115,9 +119,13 @@ class BotHandlers:
             return
 
         # ── Step 4: Fetch streaming platforms ────────────────────────────
-        platforms = await asyncio.to_thread(
-            self.watchmode.fetch_platforms, meta.imdb_id, meta.title
-        )
+        try:
+            platforms = await asyncio.to_thread(
+                self.watchmode.fetch_platforms, meta.imdb_id, meta.title
+            )
+        except ExternalAPIError:
+            logger.warning("Platform lookup failed for '%s' — leaving blank", meta.title)
+            platforms = ""
         genres_str = ",".join(meta.genres)
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 

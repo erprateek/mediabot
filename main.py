@@ -18,6 +18,7 @@ from src.config import config
 from src.api.dashboard import create_app
 from src.bot.handlers import BotHandlers, register_handlers
 from src.db.database import Database
+from src.services.errors import ExternalAPIError
 from src.services.ollama import OllamaClient
 from src.services.omdb import OmdbClient
 from src.services.watchmode import WatchmodeClient
@@ -35,9 +36,13 @@ async def weekly_streaming_refresh(db: Database, watchmode: WatchmodeClient, int
                 fresh = await asyncio.to_thread(
                     watchmode.fetch_platforms, imdb_id or None, title
                 )
-                await asyncio.to_thread(db.update_platforms, entry_id, fresh)
+            except ExternalAPIError:
+                logger.warning("Skipping platform refresh for '%s': Watchmode unavailable", title)
+                continue
             except Exception:
                 logger.exception("Streaming refresh failed for entry %s (%s)", entry_id, title)
+                continue
+            await asyncio.to_thread(db.update_platforms, entry_id, fresh)
             await asyncio.sleep(0.5)
         logger.info("Streaming refresh complete.")
 

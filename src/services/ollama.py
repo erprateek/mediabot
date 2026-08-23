@@ -24,6 +24,8 @@ from typing import Optional
 
 import requests
 
+from src.services.retry import call_with_retries
+
 logger = logging.getLogger(__name__)
 
 
@@ -70,11 +72,35 @@ class OllamaClient:
         model: str = "gemma3:12b-it-qat",
         session: Optional[requests.Session] = None,
         timeout: int = 30,
+        retries: int = 3,
+        backoff: float = 0.5,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.retries = retries
+        self.backoff = backoff
         self._session = session or requests.Session()
+
+    def _post_chat(self, raw_text: str) -> requests.Response:
+        return self._session.post(
+            f"{self.base_url}/api/chat",
+            json={
+                "model": self.model,
+                "stream": False,
+                "messages": [
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user",   "content": raw_text},
+                ],
+            },
+            timeout=self.timeout,
+        )
+
+    def _chat(self, raw_text: str) -> requests.Response:
+        return call_with_retries(
+            self._post_chat, raw_text,
+            retries=self.retries, backoff=self.backoff,
+        )
 
     def parse_watch_message(self, raw_text: str) -> ParsedWatch:
         """
@@ -83,18 +109,7 @@ class OllamaClient:
         if the model is unavailable or returns unparseable output.
         """
         try:
-            resp = self._session.post(
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": self.model,
-                    "stream": False,
-                    "messages": [
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user",   "content": raw_text},
-                    ],
-                },
-                timeout=self.timeout,
-            )
+            resp = self._chat(raw_text)
             resp.raise_for_status()
             content = resp.json()["message"]["content"].strip()
             return self._parse_response(content, raw_text)

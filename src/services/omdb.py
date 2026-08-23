@@ -9,6 +9,8 @@ from typing import Optional
 
 import requests
 
+from src.services.retry import retryable
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,19 +30,23 @@ class OmdbClient:
         self.api_key = api_key
         self._session = session or requests.Session()
 
+    @retryable()
+    def _request(self, title_query: str) -> dict:
+        resp = self._session.get(
+            self.BASE_URL,
+            params={"t": title_query, "apikey": self.api_key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def fetch(self, title_query: str) -> MediaMeta:
         """
         Query OMDb by title. Returns a MediaMeta with best-effort values —
         never raises; on any failure returns a safe default.
         """
         try:
-            resp = self._session.get(
-                self.BASE_URL,
-                params={"t": title_query, "apikey": self.api_key},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = self._request(title_query)
 
             if data.get("Response") == "True":
                 content_type = "tv" if data.get("Type") == "series" else "movie"

@@ -18,7 +18,7 @@ def _make_client(response_text: str = "", raise_exc=None) -> OllamaClient:
         resp.raise_for_status.return_value = None
         resp.json.return_value = {"message": {"content": response_text}}
         session.post.return_value = resp
-    return OllamaClient(session=session)
+    return OllamaClient(session=session, retries=1)
 
 
 class TestParseWatchMessage:
