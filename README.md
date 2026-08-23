@@ -89,5 +89,7 @@ a self-hosted runner (e.g. a Mac Mini).
 | `REFRESH_INTERVAL_SECONDS` | Seconds between streaming refreshes (default: `604800` = weekly) |
 | `OLLAMA_BASE_URL` | Ollama server URL (default: `http://localhost:11434`) |
 | `OLLAMA_MODEL` | Local model name (default: `gemma4:12b-it-qat`) |
+| `OLLAMA_TIMEOUT` | Seconds to wait for parse responses (default: `60`) |
+| `OLLAMA_KEEP_ALIVE` | Model residency between requests (default: `30m`) |
 | `HOST` / `PORT` | Dashboard bind address (defaults: `0.0.0.0` / `8000`) |
 | `WATCHMODE_REGION` | Streaming sources region (default: `US`) |

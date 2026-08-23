@@ -71,15 +71,17 @@ class OllamaClient:
         base_url: str = "http://localhost:11434",
         model: str = "gemma3:12b-it-qat",
         session: requests.Session | None = None,
-        timeout: int = 30,
+        timeout: int = 60,
         retries: int = 3,
         backoff: float = 0.5,
+        keep_alive: str = "30m",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.retries = retries
         self.backoff = backoff
+        self.keep_alive = keep_alive
         self._session = session or requests.Session()
 
     def _post_chat(self, raw_text: str) -> requests.Response:
@@ -88,6 +90,7 @@ class OllamaClient:
             json={
                 "model": self.model,
                 "stream": False,
+                "keep_alive": self.keep_alive,
                 "messages": [
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user",   "content": raw_text},

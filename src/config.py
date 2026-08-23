@@ -36,6 +36,12 @@ class Config:
     ollama_model: str = field(
         default_factory=lambda: os.getenv("OLLAMA_MODEL", "gemma4:12b-it-qat")
     )
+    ollama_timeout: int = field(
+        default_factory=lambda: int(os.getenv("OLLAMA_TIMEOUT", "60"))
+    )
+    ollama_keep_alive: str = field(
+        default_factory=lambda: os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+    )
     host: str = field(
         default_factory=lambda: os.getenv("HOST", "0.0.0.0")
     )

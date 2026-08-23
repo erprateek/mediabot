@@ -77,6 +77,8 @@ def main() -> None:
     ollama   = OllamaClient(
         base_url=config.ollama_base_url,
         model=config.ollama_model,
+        timeout=config.ollama_timeout,
+        keep_alive=config.ollama_keep_alive,
     )
 
     tg_app = build_telegram_app(db, omdb, watchmode, ollama)
