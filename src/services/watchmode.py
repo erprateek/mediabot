@@ -3,9 +3,12 @@ src/services/watchmode.py
 Watchmode API integration — resolves streaming platform availability.
 """
 
+import logging
 from typing import Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 class WatchmodeClient:
@@ -69,7 +72,7 @@ class WatchmodeClient:
             if isinstance(data, list):
                 return data
         except Exception as exc:
-            print(f"Watchmode IMDb search error: {exc}")
+            logger.error("Watchmode IMDb search error: %s", exc)
         return []
 
     def _search_by_name(self, title_query: str) -> list:
@@ -94,7 +97,7 @@ class WatchmodeClient:
             if isinstance(data, list):
                 return data
         except Exception as exc:
-            print(f"Watchmode name search error: {exc}")
+            logger.error("Watchmode name search error: %s", exc)
         return []
 
     @staticmethod
@@ -142,6 +145,6 @@ class WatchmodeClient:
             return ",".join(platforms)
 
         except Exception as exc:
-            print(f"Watchmode source retrieval error: {exc}")
+            logger.error("Watchmode source retrieval error: %s", exc)
 
         return ""

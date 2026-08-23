@@ -3,10 +3,13 @@ src/services/omdb.py
 OMDb API integration — fetches media metadata including genres.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -58,7 +61,7 @@ class OmdbClient:
                     genres=genres,
                 )
         except Exception as exc:  # pragma: no cover
-            print(f"OMDb error for '{title_query}': {exc}")
+            logger.error("OMDb error for '%s': %s", title_query, exc)
 
         return MediaMeta(
             content_type="movie",

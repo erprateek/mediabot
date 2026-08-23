@@ -17,11 +17,14 @@ Expected JSON schema:
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -97,11 +100,11 @@ class OllamaClient:
             return self._parse_response(content, raw_text)
 
         except requests.exceptions.ConnectionError:
-            print(f"[Ollama] Connection refused at {self.base_url} — falling back to raw text")
+            logger.warning("Ollama connection refused at %s — falling back to raw text", self.base_url)
         except requests.exceptions.Timeout:
-            print(f"[Ollama] Request timed out after {self.timeout}s — falling back")
+            logger.warning("Ollama request timed out after %ss — falling back", self.timeout)
         except Exception as exc:
-            print(f"[Ollama] Unexpected error: {exc} — falling back")
+            logger.error("Ollama unexpected error: %s — falling back", exc)
 
         return ParsedWatch(title=raw_text.strip(), rating=None, comment=None)
 
@@ -123,13 +126,13 @@ class OllamaClient:
         # Find the first {...} block in the response
         brace = re.search(r"\{.*\}", content, re.DOTALL)
         if not brace:
-            print(f"[Ollama] No JSON object found in response: {content!r}")
+            logger.warning("No JSON object found in response: %r", content)
             return ParsedWatch(title=fallback_title.strip(), rating=None, comment=None)
 
         try:
             data = json.loads(brace.group())
         except json.JSONDecodeError as exc:
-            print(f"[Ollama] JSON parse error: {exc} — raw: {brace.group()!r}")
+            logger.warning("JSON parse error: %s — raw: %r", exc, brace.group())
             return ParsedWatch(title=fallback_title.strip(), rating=None, comment=None)
 
         title = str(data.get("title") or fallback_title).strip()

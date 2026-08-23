@@ -126,7 +126,15 @@ class BotHandlers:
             platforms=platforms,
             genres=genres_str,
         )
-        self.db.insert_entry(entry)
+        entry_id = self.db.insert_entry(entry)
+        if entry_id is None:
+            # Lost an insert race — another user logged this title first.
+            await update.message.reply_text(
+                f"*{meta.title}* is already on the dashboard!\n"
+                f"To rate it: `/rate {meta.title} - 4.5`",
+                parse_mode="Markdown",
+            )
+            return
 
         # ── Step 6: Upsert rating if one was extracted ────────────────────
         if parsed.rating is not None:
