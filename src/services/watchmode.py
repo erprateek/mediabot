@@ -4,6 +4,7 @@ Watchmode API integration — resolves streaming platform availability.
 """
 
 import logging
+import re
 
 import requests
 
@@ -11,6 +12,10 @@ from src.services.errors import ExternalAPIError
 from src.services.retry import call_with_retries
 
 logger = logging.getLogger(__name__)
+
+# Channel add-ons ride along inside other services ("HBO (Via Hulu)",
+# "MAX (Via Amazon Prime)"). Only primary services interest us.
+_ADDON_NAME_RE = re.compile(r"\(via", re.IGNORECASE)
 
 
 class WatchmodeClient:
@@ -152,8 +157,8 @@ class WatchmodeClient:
                 continue
             name = source.get("name")
             s_type = source.get("type")
-            if not name:
-                continue
+            if not name or _ADDON_NAME_RE.search(name):
+                continue  # skip add-on channels
             if s_type in ("sub", "free") and name not in sub_platforms:
                 sub_platforms.append(name)
             elif s_type in ("rent", "buy") and name not in rent_platforms:

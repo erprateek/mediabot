@@ -130,3 +130,31 @@ class TestFetchPlatforms:
         result = client.fetch_platforms("tt0000006")
         assert result == "Netflix"
         assert "Amazon" not in result
+
+    def test_addon_channels_filtered_out(self):
+        # Real payload shape for HBO Max content: the primary service plus
+        # channel add-ons riding inside Prime/Hulu.
+        client = _make_client([
+            {"title_results": [{"id": 3171309}]},
+            [
+                {"name": "MAX (Via Amazon Prime)", "type": "sub"},
+                {"name": "HBO Max",                "type": "sub"},
+                {"name": "HBO (Via Hulu)",         "type": "sub"},
+            ],
+        ])
+        assert client.fetch_platforms("tt0000007") == "HBO Max"
+
+    def test_addons_do_not_count_toward_four_cap(self):
+        client = _make_client([
+            {"title_results": [{"id": 444}]},
+            [
+                {"name": "Showtime (Via Prime Video)", "type": "sub"},
+                {"name": "Paramount+ (Via Prime Video)", "type": "sub"},
+                {"name": "Netflix",  "type": "sub"},
+                {"name": "Hulu",     "type": "sub"},
+                {"name": "Disney+",  "type": "sub"},
+                {"name": "Peacock",  "type": "sub"},
+            ],
+        ])
+        result = client.fetch_platforms("tt0000008")
+        assert result == "Netflix,Hulu,Disney+,Peacock"
