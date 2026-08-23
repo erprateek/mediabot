@@ -71,6 +71,49 @@ class TestDashboard:
         tc, _ = client
         assert "text/html" in tc.get("/").headers["content-type"]
 
+    def test_xss_title_is_escaped(self, client):
+        tc, db = client
+        db.insert_entry(_entry('<script>alert(1)</script>', genres="Action"))
+        resp = tc.get("/")
+        assert "<script>alert(1)</script>" not in resp.text
+        assert "&lt;script&gt;" in resp.text
+
+    def test_xss_user_is_escaped(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune"))
+        db.upsert_rating(_rating("Dune", user="<b>Bob</b>", score=4.0))
+        resp = tc.get("/")
+        assert "<b>Bob</b>" not in resp.text
+        assert "&lt;b&gt;Bob&lt;/b&gt;" in resp.text
+
+    def test_no_inline_event_handlers(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Inception"))
+        html = tc.get("/").text
+        assert "onclick=" not in html
+
+
+class TestApiEntries:
+    def test_returns_json_list(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Inception", genres="Sci-Fi,Action"))
+        data = tc.get("/api/entries").json()
+        assert isinstance(data, list)
+        assert len(data) == 1
+        entry = data[0]
+        assert entry["title"] == "Inception"
+        assert entry["genres"] == ["Sci-Fi", "Action"]
+        assert entry["platforms"] == ["Netflix"]
+
+    def test_includes_ratings_and_avg(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune"))
+        db.upsert_rating(_rating("Dune", "Alice", 4.0))
+        db.upsert_rating(_rating("Dune", "Bob", 5.0))
+        entry = tc.get("/api/entries").json()[0]
+        assert len(entry["ratings"]) == 2
+        assert entry["avg"] == 4.5
+
 
 class TestBuildDashboardHtml:
     def test_no_entries_shows_no_data(self, tmp_db):
