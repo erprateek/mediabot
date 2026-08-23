@@ -281,22 +281,25 @@ class Database:
         self,
         entry_id: int,
         *,
-        poster: str = "",
-        genres: str = "",
-        year: str = "",
-        imdb_id: str = "",
-        plot: str = "",
-        actors: str = "",
-        director: str = "",
+        poster: str | None = None,
+        genres: str | None = None,
+        year: str | None = None,
+        imdb_id: str | None = None,
+        plot: str | None = None,
+        actors: str | None = None,
+        director: str | None = None,
         platforms: str | None = None,
         overwrite: bool = False,
     ) -> bool:
         """
         Merge OMDb-derived fields into an entry.
 
-        With overwrite=False (default) only EMPTY columns are filled;
-        overwrite=True replaces every provided field. platforms=None
-        leaves streaming data untouched (it comes from Watchmode).
+        Only explicitly provided (non-None) fields are considered; passing
+        a field as None never touches it.
+
+        overwrite=False (default): a provided value only fills an EMPTY
+        column. overwrite=True: provided values replace existing ones —
+        but unprovided fields still stay untouched.
 
         Returns True when a row was updated.
         """
@@ -307,22 +310,29 @@ class Database:
             if row is None:
                 return False
 
-            def pick(current: str, incoming: str) -> str:
-                if overwrite:
-                    return incoming
-                return incoming if not (current or "").strip() else current
-
-            updates = {
-                "poster":    pick(row["poster"], poster),
-                "genres":    pick(row["genres"], genres),
-                "year":      pick(row["year"], year),
-                "imdb_id":   pick(row["imdb_id"], imdb_id),
-                "plot":      pick(row["plot"], plot),
-                "actors":    pick(row["actors"], actors),
-                "director":  pick(row["director"], director),
+            provided = {
+                "poster":    poster,
+                "genres":    genres,
+                "year":      year,
+                "imdb_id":   imdb_id,
+                "plot":      plot,
+                "actors":    actors,
+                "director":  director,
+                "platforms": platforms,
             }
-            if platforms is not None:
-                updates["platforms"] = pick(row["platforms"], platforms)
+            provided = {k: v for k, v in provided.items() if v is not None}
+            if not provided:
+                return False
+
+            if overwrite:
+                updates = provided
+            else:
+                updates = {
+                    k: v for k, v in provided.items()
+                    if not (row[k] or "").strip()
+                }
+                if not updates:
+                    return False
 
             assignments = ", ".join(f"{col} = ?" for col in updates)
             conn.execute(

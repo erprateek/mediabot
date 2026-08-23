@@ -28,6 +28,10 @@ Commands
                             sequentially.
 
 /info                     — list all available commands.
+
+/refresh [Title]          — re-fetch metadata (plot, cast, year) and
+                            streaming platforms for one title.
+/refreshall               — do that for every logged title.
 """
 
 import asyncio
@@ -423,13 +427,120 @@ class BotHandlers:
             "`/remove [Title]` — delete a title and its ratings\n\n"
             "`/merge [Keep] | [Remove]` — fold a duplicate into the "
             "canonical title, moving its ratings\n\n"
-            "`/info` — show this list",
+            "`/info` — show this list\n\n"
+            "`/refresh [Title]` — re-fetch metadata + platforms for one title\n\n"
+            "`/refreshall` — refresh every logged title",
             parse_mode="Markdown",
         )
 
     # ------------------------------------------------------------------ #
-    # /merge — fold a duplicate title into the canonical one               #
+    # /refresh, /refreshall — re-fetch external metadata                   #
     # ------------------------------------------------------------------ #
+
+    async def _refresh_entry(self, entry: WatchEntry) -> str:
+        """
+        Refresh one entry: OMDb text metadata (existing poster preserved)
+        plus Watchmode platforms. Returns a status string.
+        """
+        if entry.id is None:
+            return "no OMDb match"
+        meta = await asyncio.to_thread(self.omdb.fetch, entry.title)
+        if meta.imdb_id:
+            await asyncio.to_thread(
+                self.db.apply_omdb,
+                entry.id,
+                poster=entry.poster or meta.poster,   # keep manual posters
+                genres=",".join(meta.genres),
+                year=meta.year,
+                imdb_id=meta.imdb_id,
+                plot=meta.plot,
+                actors=",".join(meta.actors),
+                director=meta.director,
+                overwrite=True,
+            )
+            status = "updated"
+        else:
+            status = "no OMDb match"
+
+        try:
+            platforms = await asyncio.to_thread(
+                self.watchmode.fetch_platforms, entry.imdb_id or None, entry.title
+            )
+            await asyncio.to_thread(self.db.update_platforms, entry.id, platforms)
+        except ExternalAPIError:
+            logger.warning("Platform refresh failed for '%s'", entry.title)
+
+        return status
+
+    async def refresh(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None:
+            return
+
+        query = " ".join(context.args or [])
+        if not query:
+            await update.message.reply_text(
+                "Format: `/refresh [Title]`\nExample: `/refresh 1917`\n\n"
+                "Refresh everything: `/refreshall`",
+                parse_mode="Markdown",
+            )
+            return
+
+        entry = await asyncio.to_thread(self.db.find_by_title, query)
+        if entry is None:
+            candidates = await asyncio.to_thread(self.db.find_candidates, query)
+            if candidates:
+                listing = "\n".join(f"  • {e.title}" for e, _ in candidates)
+                await update.message.reply_text(
+                    f"*{query}* doesn't match a logged title.\nDid you mean:\n{listing}",
+                    parse_mode="Markdown",
+                )
+            else:
+                await update.message.reply_text(
+                    f"*{query}* isn't on the dashboard.",
+                    parse_mode="Markdown",
+                )
+            return
+
+        status = await self._refresh_entry(entry)
+        if status == "updated":
+            await update.message.reply_text(
+                f"🔄 Refreshed *{entry.title}* — metadata and platforms updated.",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                f"⚠️ No OMDb match for *{entry.title}* — platforms still refreshed.",
+                parse_mode="Markdown",
+            )
+
+    async def refreshall(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None:
+            return
+
+        entries = await asyncio.to_thread(self.db.all_entries)
+        if not entries:
+            await update.message.reply_text("Nothing logged yet.")
+            return
+
+        await update.message.reply_text(
+            f"🔄 Refreshing {len(entries)} title(s)…"
+        )
+
+        updated, unmatched = 0, []
+        for entry in entries:
+            status = await self._refresh_entry(entry)
+            if status == "updated":
+                updated += 1
+            else:
+                unmatched.append(entry.title)
+            await asyncio.sleep(0.4)   # stay polite to the free tiers
+
+        lines = [f"✅ Refreshed {updated}/{len(entries)} title(s)."]
+        if unmatched:
+            lines.append("No OMDb match: " + ", ".join(unmatched))
+        await update.message.reply_text("\n".join(lines))
+
+
 
     async def _resolve_or_suggest(self, update: Update, query: str) -> WatchEntry | None:
         """Find a logged title, or reply with fuzzy suggestions."""
@@ -452,6 +563,10 @@ class BotHandlers:
                 parse_mode="Markdown",
             )
         return None
+
+    # ------------------------------------------------------------------ #
+    # /merge — fold a duplicate title into the canonical one               #
+    # ------------------------------------------------------------------ #
 
     async def merge(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None:
@@ -516,3 +631,5 @@ def register_handlers(app: Application, handlers: BotHandlers) -> None:
     app.add_handler(CommandHandler("show", handlers.show))
     app.add_handler(CommandHandler("showall", handlers.showall))
     app.add_handler(CommandHandler("info", handlers.info))
+    app.add_handler(CommandHandler("refresh", handlers.refresh))
+    app.add_handler(CommandHandler("refreshall", handlers.refreshall))

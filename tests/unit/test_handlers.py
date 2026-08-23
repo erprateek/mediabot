@@ -231,6 +231,63 @@ class TestInfoCommand:
             assert cmd in text, f"missing {cmd} in info output"
 
 
+class TestRefreshCommands:
+    @pytest.mark.asyncio
+    async def test_refresh_updates_metadata_but_keeps_poster(self, tmp_db):
+        h = _make_handlers(tmp_db)   # omdb mock returns poster+pLOT for "The Batman"
+        await h.watch(_make_update(), _make_context("The", "Batman"))
+
+        # Simulate a manually-fixed poster that must survive the refresh
+        stale = tmp_db.find_by_title("The Batman")
+        tmp_db.apply_omdb(stale.id, poster="https://fixed.example.com/p.jpg",
+                          overwrite=True)
+
+        update = _make_update()
+        await h.refresh(update, _make_context("The", "Batman"))
+
+        entry = tmp_db.find_by_title("The Batman")
+        assert entry.poster == "https://fixed.example.com/p.jpg"  # preserved
+        text = update.message.reply_text.call_args[0][0]
+        assert "Refreshed" in text
+
+    @pytest.mark.asyncio
+    async def test_refresh_no_omdb_match_still_refreshes_platforms(self, tmp_db):
+        meta = MediaMeta(content_type="movie", poster="", title="Ghost Movie",
+                         imdb_id=None, genres=[])
+        h = _make_handlers(tmp_db, omdb_meta=meta,
+                           parsed=ParsedWatch("Ghost Movie", None, None))
+        await h.watch(_make_update(), _make_context("Ghost", "Movie"))
+
+        update = _make_update()
+        await h.refresh(update, _make_context("Ghost", "Movie"))
+        text = update.message.reply_text.call_args[0][0]
+        assert "No OMDb match" in text
+
+    @pytest.mark.asyncio
+    async def test_refresh_unknown_title_suggests(self, tmp_db):
+        tmp_db.insert_entry(_entry(title="Interstellar"))
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.refresh(update, _make_context("Interstelar"))
+        assert "Did you mean" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_refresh_no_args_shows_usage(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.refresh(update, _make_context())
+        assert "Format" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_refreshall_summarizes(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        await h.watch(_make_update(), _make_context("The", "Batman"))
+        update = _make_update()
+        await h.refreshall(update, _make_context())
+        text = update.message.reply_text.call_args_list[-1][0][0]
+        assert "Refreshed 1/1" in text
+
+
 class TestMergeCommand:
     @pytest.mark.asyncio
     async def test_merge_moves_ratings(self, tmp_db):

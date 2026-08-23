@@ -73,6 +73,8 @@ The FastAPI dashboard will be at `http://localhost:8000`
 | `/remove [Title]` | Delete a title (and its ratings) |
 | `/merge [Keep] \| [Remove]` | Fold a duplicate into the canonical title, moving ratings |
 | `/info` | List all commands |
+| `/refresh [Title]` | Re-fetch metadata and streaming platforms for one title |
+| `/refreshall` | Re-fetch metadata and platforms for every title |
 
 Likely duplicate pairs are also exposed at `GET /api/duplicates`.
 
