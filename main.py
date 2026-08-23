@@ -31,8 +31,13 @@ async def weekly_streaming_refresh(db: Database, watchmode: WatchmodeClient, int
         await asyncio.sleep(interval)
         logger.info("Refreshing streaming platforms for all entries...")
         for entry_id, title, imdb_id in db.all_entries_for_refresh():
-            fresh = watchmode.fetch_platforms(imdb_id or None, title)
-            db.update_platforms(entry_id, fresh)
+            try:
+                fresh = await asyncio.to_thread(
+                    watchmode.fetch_platforms, imdb_id or None, title
+                )
+                await asyncio.to_thread(db.update_platforms, entry_id, fresh)
+            except Exception:
+                logger.exception("Streaming refresh failed for entry %s (%s)", entry_id, title)
             await asyncio.sleep(0.5)
         logger.info("Streaming refresh complete.")
 

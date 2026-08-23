@@ -3,6 +3,7 @@ src/api/dashboard.py
 FastAPI routes for the web dashboard.
 """
 
+import asyncio
 import json
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -508,7 +509,8 @@ def create_app(db: Database) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def web_dashboard() -> str:
-        return build_dashboard_html(db.all_rated_entries())
+        rated_entries = await asyncio.to_thread(db.all_rated_entries)
+        return build_dashboard_html(rated_entries)
 
     @app.get("/health")
     async def health() -> dict:
