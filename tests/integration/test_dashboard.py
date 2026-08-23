@@ -13,14 +13,17 @@ from src.api.dashboard import build_dashboard_html, create_app
 from src.db.database import Rating, WatchEntry
 
 
-def _entry(title: str, content_type: str = "movie", genres: str = "Action") -> WatchEntry:
-    return WatchEntry(
+def _entry(title: str, content_type: str = "movie", genres: str = "Action",
+           **overrides) -> WatchEntry:
+    base = dict(
         user="Alice", title=title,
         date=datetime.now().strftime("%Y-%m-%d %H:%M"),
         content_type=content_type, poster="",
         imdb_id="tt0000001", platforms="Netflix",
         genres=genres,
     )
+    base.update(overrides)
+    return WatchEntry(**base)
 
 def _rating(title: str, user: str = "Alice", score: float = 4.0) -> Rating:
     return Rating(title=title, user=user, score=score,
@@ -117,6 +120,24 @@ class TestHomeFilters:
         assert 'data-genre="Crime"' in html                     # tv genres included
         assert 'id="min-rating"' in html                        # rating filter
         assert "Avg rating" not in html                         # stat replaced
+
+    def test_home_platform_chips_rendered_with_logos(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune", platforms="HBO Max"))
+        html = tc.get("/").text
+
+        assert 'id="home-platform-filter"' in html
+        assert 'data-service="HBO Max"' in html
+        assert "/static/logos/hbomax-word.svg" in html          # wordmark logo
+        assert "All services" in html
+
+    def test_cards_carry_platforms_attribute(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune", platforms="HBO Max,Netflix"))
+        html = tc.get("/").text
+        match = re.search(r"data-platforms='(\[.*?\])'", html)
+        assert match, "data-platforms attribute missing or malformed"
+        assert json.loads(match.group(1)) == ["HBO Max", "Netflix"]
 
     def test_stat_cards_navigate(self, client):
         tc, db = client

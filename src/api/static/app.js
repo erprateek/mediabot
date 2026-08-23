@@ -178,7 +178,11 @@ document.addEventListener("click", (e) => {
   if(nav){ showPage(nav.dataset.page); return; }
 
   const btn = e.target.closest(".gfbtn");
-  if(btn){ filterGenre(btn); return; }
+  if(btn){
+    if(btn.closest("#home-platform-filter")) filterService(btn);
+    else filterGenre(btn);
+    return;
+  }
 
   if(e.target.id === "modal-overlay" || e.target.closest(".modal-close")) closeModal();
 });
@@ -225,6 +229,7 @@ function filterGenre(btn){
   }
 
   page.querySelectorAll(".gfbtn").forEach(b => {
+    if(b.dataset.genre === undefined) return;   // platform chips live elsewhere
     b.classList.toggle("active",
       b.dataset.genre === "all" ? sel.size === 0 : sel.has(b.dataset.genre));
   });
@@ -232,23 +237,48 @@ function filterGenre(btn){
   applyCardVisibility(page);
 }
 
-function parseGenres(card){
-  try { return JSON.parse(card.dataset.genres || "[]"); }
+function filterService(btn){
+  // Multi-select streaming-service chips on the home page.
+  const page = btn.closest(".page");
+  if(page._serviceSel === undefined) page._serviceSel = new Set();
+  const sel = page._serviceSel;
+  const service = btn.dataset.service;
+
+  if(service === "all"){
+    sel.clear();
+  } else {
+    sel.has(service) ? sel.delete(service) : sel.add(service);
+  }
+
+  page.querySelectorAll("#home-platform-filter .gfbtn").forEach(b => {
+    b.classList.toggle("active",
+      b.dataset.service === "all" ? sel.size === 0 : sel.has(b.dataset.service));
+  });
+
+  applyCardVisibility(page);
+}
+
+function parseListAttr(card, attr){
+  try { return JSON.parse(card.dataset[attr] || "[]"); }
   catch { return []; }
 }
 
 // Single source of truth: every card on `page` is checked against that
-// page's active filters — genre set, minimum rating, and title query.
+// page's active filters — genres, services, minimum rating, title query.
 function applyCardVisibility(page){
-  const genreSel  = page._genreSel  || new Set();
-  const minRating = page._minRating || 0;
-  const q         = (page._searchQ  || "").toLowerCase();
+  const genreSel    = page._genreSel   || new Set();
+  const serviceSel  = page._serviceSel || new Set();
+  const minRating   = page._minRating  || 0;
+  const q           = (page._searchQ   || "").toLowerCase();
 
   page.querySelectorAll(".card").forEach(card => {
     let ok = true;
 
     if(ok && genreSel.size)
-      ok = parseGenres(card).some(g => genreSel.has(g));
+      ok = parseListAttr(card, "genres").some(g => genreSel.has(g));
+
+    if(ok && serviceSel.size)
+      ok = parseListAttr(card, "platforms").some(s => serviceSel.has(s));
 
     if(ok && minRating > 0){
       const avg = parseFloat(card.dataset.avg);

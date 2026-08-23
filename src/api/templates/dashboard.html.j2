@@ -37,7 +37,7 @@
 {%- endmacro %}
 
 {% macro card(e, full) -%}
-<div class="card" data-title="{{ e.title }}" data-genres='{{ e.genres|tojson }}' data-avg="{{ e.avg if e.avg is not none else '' }}">
+<div class="card" data-title="{{ e.title }}" data-genres='{{ e.genres|tojson }}' data-platforms='{{ e.platforms|tojson }}' data-avg="{{ e.avg if e.avg is not none else '' }}">
   <div class="poster">
     <img src="{{ e.poster or fallback_poster }}" loading="lazy"
          onerror="this.onerror=null;this.src='{{ fallback_poster }}'">
@@ -94,6 +94,14 @@
     <button class="gfbtn active" data-genre="all">All</button>
     {%- for g in all_genres %}<button class="gfbtn" data-genre="{{ g }}">{{ g }}</button>{% endfor %}
   </div>
+  {% if all_platforms %}
+  <div class="genre-filter" id="home-platform-filter">
+    <button class="gfbtn pchip active" data-service="all"><span>All services</span></button>
+    {%- for p in all_platforms %}
+    <button class="gfbtn pchip" data-service="{{ p.name }}" title="Streaming on {{ p.name }}">{{ picon(p, 16) }}<span>{{ p.name }}</span></button>
+    {%- endfor %}
+  </div>
+  {% endif %}
   <div class="section-hd">
     <h2>Movies</h2>
     <button class="view-all" data-page="movies">View all →</button>

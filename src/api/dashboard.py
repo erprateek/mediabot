@@ -35,9 +35,9 @@ _PLATFORMS: dict[str, dict] = {
     "Hulu":        {"bg": "#1CE783", "fg": "#000",  "label": "H",
                     "logo": f"{_LOGOS}/hulu.svg"},
     "Max":         {"bg": "#002BE7", "fg": "#fff",  "label": "max",
-                    "logo": f"{_LOGOS}/max.svg"},
+                    "logo": f"{_LOGOS}/max-word.svg"},
     "HBO Max":     {"bg": "#002BE7", "fg": "#fff",  "label": "max",
-                    "logo": f"{_LOGOS}/max.svg"},
+                    "logo": f"{_LOGOS}/hbomax-word.svg"},
     "HBO":         {"bg": "#9E7DFF", "fg": "#fff",  "label": "HBO",
                     "logo": f"{_LOGOS}/hbo.svg"},
     "Disney+":     {"bg": "#113CCF", "fg": "#fff",  "label": "D+"},
@@ -150,12 +150,21 @@ def build_dashboard_html(rated_entries: list[RatedEntry]) -> str:
     tv_genres    = unique_genres(tv_dicts)
     all_genres   = unique_genres(movie_dicts + tv_dicts)
 
+    seen_services: set[str] = set()
+    all_platforms: list[dict] = []
+    for d in movie_dicts + tv_dicts:
+        for name in d["platforms"]:
+            if name not in seen_services:
+                seen_services.add(name)
+                all_platforms.append(_picon(name))
+
     return _template.render(
         n_movies=len(movies),
         n_tv=len(tv),
         movies=movie_dicts,
         tv=tv_dicts,
         all_genres=all_genres,
+        all_platforms=all_platforms,
         movie_genres=movie_genres,
         tv_genres=tv_genres,
         platforms_json=json.dumps(_PLATFORMS),

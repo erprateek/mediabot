@@ -99,6 +99,9 @@ body{background:var(--color-background-tertiary);color:var(--color-text-primary)
 .gfbtn{font-size:12px;padding:4px 12px;border-radius:20px;border:0.5px solid var(--color-border-tertiary);background:var(--color-background-secondary);color:var(--color-text-secondary);cursor:pointer;font-family:inherit;transition:background .15s,color .15s}
 .gfbtn:hover{color:var(--color-text-primary)}
 .gfbtn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.pchip{display:inline-flex;align-items:center;gap:6px;padding-left:9px}
+.pchip .picon{width:16px;height:16px;border-radius:3px}
+.pchip span{pointer-events:none}
 .full-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:16px}
 .full-grid .card{width:auto;flex-shrink:unset;transform-origin:center center}
 .full-grid .card:hover{transform:scale(1.05)}
