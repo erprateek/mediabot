@@ -8,11 +8,9 @@ on:
 
 jobs:
   test:
-    # ---------------------------------------------------------------
-    # Runs on your Mac Mini self-hosted runner.
-    # See scripts/setup_launchd.sh to register it.
-    # ---------------------------------------------------------------
-    runs-on: self-hosted
+    # GitHub-hosted runner — the suite is fully mocked (no real API calls,
+    # no Ollama, no macOS dependency), so no self-hosted machine is needed.
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code

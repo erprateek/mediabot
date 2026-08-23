@@ -69,16 +69,14 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-## CI / Self-Hosted Runner (Mac Mini)
+## CI
 
-This project uses GitHub Actions with a **self-hosted runner** on your Mac Mini.
+CI runs on GitHub-hosted runners (`ubuntu-latest`) via GitHub Actions — no local
+machine required. All HTTP calls in tests are mocked, so no API keys or Ollama
+are needed; dummy env vars are injected by the workflow.
 
-```bash
-# One-time setup — registers and installs the runner as a launchd service
-./scripts/setup_launchd.sh
-```
-
-See [`scripts/setup_launchd.sh`](scripts/setup_launchd.sh) for full instructions.
+`scripts/setup_launchd.sh` remains available if you prefer to run the suite on
+a self-hosted runner (e.g. a Mac Mini).
 
 ## Environment Variables
 
