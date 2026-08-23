@@ -34,15 +34,30 @@ logger = logging.getLogger(__name__)
 
 def _parse_rate_text(text: str) -> tuple[str, float | None]:
     """
-    Parses 'The Batman - 4.5' or 'The Batman - 4'.
+    Parses a title plus score from any of these forms:
+      'The Batman - 4.5'
+      'Lanterns 8.5/10'
+      'Dune - 9/10'
+      'Movie 3/5'
     Returns (title, score) or (title, None) if no score found.
+    Scores out of 10 are converted to the /5 scale and clamped to 0–5.
     """
-    match = re.search(r"^(.+?)\s*-\s*(\d+(?:\.\d+)?)\s*$", text.strip())
-    if match:
-        score = float(match.group(2))
-        score = max(0.0, min(5.0, score))
-        return match.group(1).strip(), score
-    return text.strip(), None
+    text = text.strip()
+
+    slash = re.search(r"^(.+?)\s*(\d+(?:\.\d+)?)\s*/\s*(10|5)\s*$", text)
+    if slash:
+        value = float(slash.group(2))
+        if slash.group(3) == "10":
+            value /= 2.0
+        title = slash.group(1).strip().rstrip("-").strip()
+        return title, max(0.0, min(5.0, value))
+
+    dash = re.search(r"^(.+?)\s*-\s*(\d+(?:\.\d+)?)\s*$", text)
+    if dash:
+        score = float(dash.group(2))
+        return dash.group(1).strip(), max(0.0, min(5.0, score))
+
+    return text, None
 
 
 class BotHandlers:
@@ -215,7 +230,7 @@ class BotHandlers:
 
         if score is None:
             await update.message.reply_text(
-                "Couldn't parse a score.\nFormat: `/rate The Batman - 4.5`",
+                "Couldn't parse a score.\nFormat: `/rate The Batman - 4.5` or `/rate Dune 9/10`",
                 parse_mode="Markdown",
             )
             return
