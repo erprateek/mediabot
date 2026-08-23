@@ -187,6 +187,24 @@ document.addEventListener("keydown", e => {
   if(e.key === "Escape") closeModal();
 });
 
+// Live title search (home page)
+document.addEventListener("input", e => {
+  if(e.target.id !== "title-search") return;
+  const page = document.getElementById("home");
+  if(!page) return;
+  page._searchQ = e.target.value.trim();
+  applyCardVisibility(page);
+});
+
+// Minimum-rating filter (home page stat card)
+document.addEventListener("change", e => {
+  if(e.target.id !== "min-rating") return;
+  const page = document.getElementById("home");
+  if(!page) return;
+  page._minRating = parseFloat(e.target.value) || 0;
+  applyCardVisibility(page);
+});
+
 function showPage(id){
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
   document.getElementById(id).classList.add("active");
@@ -211,9 +229,41 @@ function filterGenre(btn){
       b.dataset.genre === "all" ? sel.size === 0 : sel.has(b.dataset.genre));
   });
 
-  page.querySelectorAll(".full-grid .card").forEach(card => {
-    if(sel.size === 0){ card.classList.remove("hidden"); return; }
-    const genres = JSON.parse(card.dataset.genres || "[]");
-    card.classList.toggle("hidden", !genres.some(g => sel.has(g)));
+  applyCardVisibility(page);
+}
+
+function parseGenres(card){
+  try { return JSON.parse(card.dataset.genres || "[]"); }
+  catch { return []; }
+}
+
+// Single source of truth: every card on `page` is checked against that
+// page's active filters — genre set, minimum rating, and title query.
+function applyCardVisibility(page){
+  const genreSel  = page._genreSel  || new Set();
+  const minRating = page._minRating || 0;
+  const q         = (page._searchQ  || "").toLowerCase();
+
+  page.querySelectorAll(".card").forEach(card => {
+    let ok = true;
+
+    if(ok && genreSel.size)
+      ok = parseGenres(card).some(g => genreSel.has(g));
+
+    if(ok && minRating > 0){
+      const avg = parseFloat(card.dataset.avg);
+      ok = !isNaN(avg) && avg >= minRating;
+    }
+
+    if(ok && q)
+      ok = (card.dataset.title || "").toLowerCase().includes(q);
+
+    card.classList.toggle("hidden", !ok);
   });
+}
+
+// Home page convenience wrapper (rails + shared chips + search box).
+function applyHomeFilters(){
+  const page = document.getElementById("home");
+  if(page) applyCardVisibility(page);
 }

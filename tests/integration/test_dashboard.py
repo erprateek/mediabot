@@ -2,6 +2,8 @@
 tests/integration/test_dashboard.py
 """
 
+import json
+import re
 from datetime import datetime
 
 import pytest
@@ -92,6 +94,43 @@ class TestDashboard:
         db.insert_entry(_entry("Inception"))
         html = tc.get("/").text
         assert "onclick=" not in html
+
+
+class TestHomeFilters:
+    def test_data_genres_attribute_is_valid_json(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune", genres="Sci-Fi,Adventure"))
+        html = tc.get("/").text
+        match = re.search(r"data-genres='(\[.*?\])'", html)
+        assert match, "data-genres attribute missing or malformed"
+        assert json.loads(match.group(1)) == ["Sci-Fi", "Adventure"]
+
+    def test_home_has_genre_chips_search_and_rating_filter(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune", genres="Sci-Fi"))
+        db.insert_entry(_entry("The Wire", "tv", genres="Crime"))
+        html = tc.get("/").text
+
+        assert 'id="title-search"' in html                      # search box
+        assert 'id="home-genre-filter"' in html                 # shared chips
+        assert 'data-genre="Sci-Fi"' in html
+        assert 'data-genre="Crime"' in html                     # tv genres included
+        assert 'id="min-rating"' in html                        # rating filter
+        assert "Avg rating" not in html                         # stat replaced
+
+    def test_stat_cards_navigate(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune"))
+        html = tc.get("/").text
+        assert 'class="stat stat-click" data-page="movies"' in html
+        assert 'class="stat stat-click" data-page="tv"' in html
+
+    def test_cards_carry_avg_for_rating_filter(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune"))
+        db.upsert_rating(_rating("Dune", score=4.0))
+        html = tc.get("/").text
+        assert 'data-avg="4.0"' in html
 
 
 class TestApiEntries:

@@ -135,9 +135,6 @@ def build_dashboard_html(rated_entries: list[RatedEntry]) -> str:
     movies = [re for re in rated_entries if re.entry.content_type != "tv"]
     tv     = [re for re in rated_entries if re.entry.content_type == "tv"]
 
-    all_scores = [r.score for re in rated_entries for r in re.ratings]
-    avg_rating = f"{sum(all_scores) / len(all_scores):.1f}" if all_scores else "—"
-
     movie_dicts = [_entry_to_dict(re) for re in movies]
     tv_dicts    = [_entry_to_dict(re) for re in tv]
 
@@ -149,14 +146,18 @@ def build_dashboard_html(rated_entries: list[RatedEntry]) -> str:
                     seen.append(g)
         return seen
 
+    movie_genres = unique_genres(movie_dicts)
+    tv_genres    = unique_genres(tv_dicts)
+    all_genres   = unique_genres(movie_dicts + tv_dicts)
+
     return _template.render(
         n_movies=len(movies),
         n_tv=len(tv),
-        avg=avg_rating,
         movies=movie_dicts,
         tv=tv_dicts,
-        movie_genres=unique_genres(movie_dicts),
-        tv_genres=unique_genres(tv_dicts),
+        all_genres=all_genres,
+        movie_genres=movie_genres,
+        tv_genres=tv_genres,
         platforms_json=json.dumps(_PLATFORMS),
         fallback_poster=FALLBACK_POSTER,
     )
