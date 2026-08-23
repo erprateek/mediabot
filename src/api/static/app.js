@@ -37,10 +37,14 @@ function starsHTML(avg){
 }
 
 // Fill a "label value" line; hide the whole line when the value is empty.
+// Null-safe: tolerate stale HTML missing these nodes.
 function fillLine(lineId, valueId, value){
+  const line = document.getElementById(lineId);
+  const val  = document.getElementById(valueId);
+  if(!line || !val) return;
   const v = (value || "").toString().trim();
-  document.getElementById(valueId).textContent = v;
-  document.getElementById(lineId).style.display = v ? "" : "none";
+  val.textContent = v;
+  line.style.display = v ? "" : "none";
 }
 
 // ---------------------------------------------------------------- //
@@ -104,8 +108,10 @@ async function openModal(title){
   fillLine("modal-actors-line", "modal-actors", (item.actors || []).join(", "));
 
   const plotEl = document.getElementById("modal-plot");
-  plotEl.textContent = item.plot || "";
-  plotEl.style.display = item.plot ? "" : "none";
+  if(plotEl){
+    plotEl.textContent = item.plot || "";
+    plotEl.style.display = item.plot ? "" : "none";
+  }
 
   // Build 5→1 bar rows
   const byScore = {5:[],4:[],3:[],2:[],1:[]};
