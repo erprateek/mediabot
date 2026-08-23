@@ -268,6 +268,69 @@ class Database:
                 (plot, actors, director, entry_id),
             )
 
+    def rename_entry(self, entry_id: int, new_title: str) -> bool:
+        """Rename a logged title in place. Returns True when updated."""
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "UPDATE watch_logs SET title = ? WHERE id = ?",
+                (new_title, entry_id),
+            )
+            return cursor.rowcount > 0
+
+    def apply_omdb(
+        self,
+        entry_id: int,
+        *,
+        poster: str = "",
+        genres: str = "",
+        year: str = "",
+        imdb_id: str = "",
+        plot: str = "",
+        actors: str = "",
+        director: str = "",
+        platforms: str | None = None,
+        overwrite: bool = False,
+    ) -> bool:
+        """
+        Merge OMDb-derived fields into an entry.
+
+        With overwrite=False (default) only EMPTY columns are filled;
+        overwrite=True replaces every provided field. platforms=None
+        leaves streaming data untouched (it comes from Watchmode).
+
+        Returns True when a row was updated.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM watch_logs WHERE id = ?", (entry_id,)
+            ).fetchone()
+            if row is None:
+                return False
+
+            def pick(current: str, incoming: str) -> str:
+                if overwrite:
+                    return incoming
+                return incoming if not (current or "").strip() else current
+
+            updates = {
+                "poster":    pick(row["poster"], poster),
+                "genres":    pick(row["genres"], genres),
+                "year":      pick(row["year"], year),
+                "imdb_id":   pick(row["imdb_id"], imdb_id),
+                "plot":      pick(row["plot"], plot),
+                "actors":    pick(row["actors"], actors),
+                "director":  pick(row["director"], director),
+            }
+            if platforms is not None:
+                updates["platforms"] = pick(row["platforms"], platforms)
+
+            assignments = ", ".join(f"{col} = ?" for col in updates)
+            conn.execute(
+                f"UPDATE watch_logs SET {assignments} WHERE id = ?",
+                (*updates.values(), entry_id),
+            )
+            return True
+
     def delete_entry(self, entry_id: int) -> bool:
         """Remove a title entirely. Ratings cascade via FK; also deleted
         explicitly so removal works even if foreign_keys is unavailable.

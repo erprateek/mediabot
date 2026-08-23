@@ -204,6 +204,27 @@ class TestMetadataAndDeletion:
     def test_delete_entry_unknown_id_returns_false(self, tmp_db):
         assert tmp_db.delete_entry(99999) is False
 
+    def test_rename_entry(self, tmp_db):
+        eid = tmp_db.insert_entry(_entry())
+        assert tmp_db.rename_entry(eid, "The Batman: Revised") is True
+        assert tmp_db.find_by_title("The Batman") is None
+        assert tmp_db.find_by_title("The Batman: Revised") is not None
+
+    def test_apply_omdb_fills_only_empty_fields_by_default(self, tmp_db):
+        tmp_db.insert_entry(_entry(plot="Existing plot.", director=""))
+        eid = tmp_db.find_by_title("The Batman").id
+        tmp_db.apply_omdb(eid, plot="New plot.", director="Matt Reeves",
+                          year="2022")
+        entry = tmp_db.find_by_title("The Batman")
+        assert entry.plot == "Existing plot."       # untouched
+        assert entry.director == "Matt Reeves"      # filled
+        assert entry.year == "2022"                 # filled
+
+    def test_apply_omdb_overwrite_replaces_values(self, tmp_db):
+        eid = tmp_db.insert_entry(_entry(plot="Old plot."))
+        tmp_db.apply_omdb(eid, plot="New plot.", overwrite=True)
+        assert tmp_db.find_by_title("The Batman").plot == "New plot."
+
 
 class TestMerging:
     def _two_entries(self, db) -> tuple[int, int]:
