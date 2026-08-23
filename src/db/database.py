@@ -99,7 +99,13 @@ class Database:
     # Writes                                                               #
     # ------------------------------------------------------------------ #
 
-    def insert_entry(self, entry: WatchEntry) -> int:
+    # ... (lines 1-172 unchanged)
+    
+    # ------------------------------------------------------------------ #
+    # Writes                                                               #
+    # ------------------------------------------------------------------ #
+    
+    def insert_entry(self, entry: WatchEntry) -> Optional[int]:
         with self._conn() as conn:
             cursor = conn.execute("""
                 INSERT OR IGNORE INTO watch_logs
@@ -109,7 +115,11 @@ class Database:
                 entry.user, entry.title, entry.date, entry.content_type,
                 entry.poster, entry.imdb_id, entry.platforms, entry.genres,
             ))
-            return cursor.lastrowid
+            # Check if the row was actually inserted (not ignored)
+            if cursor.rowcount > 0:
+                return cursor.lastrowid
+            return None
+                return None
 
     def upsert_rating(self, rating: Rating) -> None:
         with self._conn() as conn:
