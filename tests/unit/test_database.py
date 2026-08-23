@@ -5,7 +5,7 @@ tests/unit/test_database.py
 import sqlite3
 from datetime import datetime
 
-from src.db.database import Database, Rating, WatchEntry
+from src.db.database import SCHEMA_VERSION, Database, Rating, WatchEntry
 
 
 def _entry(**overrides) -> WatchEntry:
@@ -159,8 +159,8 @@ class TestV3Migration:
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         cols = [r[1] for r in conn.execute("PRAGMA table_info(watch_logs)")]
         conn.close()
-        assert version == 3
-        for col in ("plot", "actors", "director"):
+        assert version == SCHEMA_VERSION
+        for col in ("plot", "actors", "director", "year"):
             assert col in cols
         # Data survived the whole chain
         assert db.find_by_title("The Batman") is not None
@@ -171,7 +171,7 @@ class TestV3Migration:
         Database(db_file=db_file)
         Database(db_file=db_file)  # must not raise or re-migrate
         conn = sqlite3.connect(db_file)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         conn.close()
 
 
@@ -203,6 +203,75 @@ class TestMetadataAndDeletion:
 
     def test_delete_entry_unknown_id_returns_false(self, tmp_db):
         assert tmp_db.delete_entry(99999) is False
+
+
+class TestMerging:
+    def _two_entries(self, db) -> tuple[int, int]:
+        keep_id = db.insert_entry(_entry(title="Dune: Part Two", platforms="",
+                                         genres="Sci-Fi"))
+        dup_id = db.insert_entry(_entry(title="Dune Part Two", platforms="Netflix",
+                                        genres="Drama,Sci-Fi"))
+        return keep_id, dup_id
+
+    def test_merge_moves_ratings_and_fills_empty_fields(self, tmp_db):
+        keep_id, dup_id = self._two_entries(tmp_db)
+        tmp_db.upsert_rating(_rating(title="Dune Part Two", user="Bob", score=5.0))
+        tmp_db.upsert_rating(_rating(user="Alice", score=3.0,
+                                     date="2026-01-01 10:00"))         # older on keep
+        # Alice re-rated on the duplicate, newer → must win
+        tmp_db.upsert_rating(_rating(title="Dune Part Two", user="Alice",
+                                     score=4.5, date="2026-02-01 10:00"))
+
+        result = tmp_db.merge_entries(keep_id, dup_id)
+
+        assert result["kept_title"] == "Dune: Part Two"
+        assert result["removed_title"] == "Dune Part Two"
+        assert result["moved_ratings"] == 2  # Bob inserted + Alice updated
+
+        entry = tmp_db.find_by_title("Dune: Part Two")
+        assert entry.platforms == "Netflix"           # filled from duplicate
+        assert entry.genres == "Sci-Fi,Drama"         # union, order preserved
+        assert tmp_db.find_by_title("Dune Part Two") is None
+
+        ratings = {r.user: r.score for r in tmp_db.ratings_for_title("Dune: Part Two")}
+        assert ratings == {"Alice": 4.5, "Bob": 5.0}   # latest wins
+
+    def test_merge_keeps_survivor_nonempty_values(self, tmp_db):
+        keep_id = tmp_db.insert_entry(_entry(plot="Canonical plot."))
+        dup_id = tmp_db.insert_entry(_entry(title="Dune Part Two", plot="Dup plot."))
+        tmp_db.merge_entries(keep_id, dup_id)
+        assert tmp_db.find_by_title("The Batman").plot == "Canonical plot."
+
+    def test_merge_same_or_unknown_ids(self, tmp_db):
+        eid = tmp_db.insert_entry(_entry())
+        assert tmp_db.merge_entries(eid, eid) is None
+        assert tmp_db.merge_entries(eid, 99999) is None
+        assert tmp_db.merge_entries(99999, eid) is None
+
+
+class TestTitleMatching:
+    def test_normalize_strips_articles_and_punctuation(self, tmp_db):
+        norm = tmp_db._normalize_title
+        assert norm("The Batman") == norm("batman")
+        assert norm("Dune: Part Two") == norm("dune part two")
+
+    def test_find_candidates_ranks_near_titles(self, tmp_db):
+        tmp_db.insert_entry(_entry(title="Dune: Part Two"))
+        tmp_db.insert_entry(_entry(title="Interstellar"))
+        matches = tmp_db.find_candidates("dune part two")
+        assert matches and matches[0][0].title == "Dune: Part Two"
+
+    def test_find_candidates_excludes_unrelated(self, tmp_db):
+        tmp_db.insert_entry(_entry(title="Interstellar"))
+        assert tmp_db.find_candidates("The Godfather") == []
+
+    def test_duplicate_candidates_pairs_similar_titles(self, tmp_db):
+        tmp_db.insert_entry(_entry(title="The Batman"))       # older (keep)
+        tmp_db.insert_entry(_entry(title="Batman The"))       # newer (dup)
+        pairs = tmp_db.duplicate_candidates()
+        assert len(pairs) == 1
+        assert pairs[0]["keep"]["title"] == "The Batman"
+        assert pairs[0]["duplicate"]["title"] == "Batman The"
 
 
 class TestRatingIntegrity:

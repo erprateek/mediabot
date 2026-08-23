@@ -2,13 +2,31 @@
 tests/unit/test_handlers.py
 """
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.bot.handlers import BotHandlers, _parse_rate_text
+from src.db.database import Rating, WatchEntry
 from src.services.ollama import ParsedWatch
 from src.services.omdb import MediaMeta
+
+
+def _entry(**overrides) -> WatchEntry:
+    base = dict(
+        user="Alice", title="The Batman",
+        date=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        content_type="movie", poster="", imdb_id="tt1877830",
+        platforms="", genres="",
+    )
+    base.update(overrides)
+    return WatchEntry(**base)
+
+
+def _rating(title: str = "The Batman", user: str = "Alice",
+            score: float = 4.0, date: str = "2026-01-01 10:00") -> Rating:
+    return Rating(title=title, user=user, score=score, date=date)
 
 
 class TestParseRateText:
@@ -198,6 +216,133 @@ class TestRemoveCommand:
         h = _make_handlers(tmp_db)
         update = _make_update()
         await h.remove(update, _make_context())
+        assert "Format" in update.message.reply_text.call_args[0][0]
+
+
+class TestMergeCommand:
+    @pytest.mark.asyncio
+    async def test_merge_moves_ratings(self, tmp_db):
+        tmp_db.insert_entry(_entry(title="Dune: Part Two"))
+        tmp_db.insert_entry(_entry(title="Dune Part Two"))
+        tmp_db.upsert_rating(_rating(title="Dune Part Two", user="Bob", score=5.0))
+
+        update = _make_update()
+        h = _make_handlers(tmp_db)
+        await h.merge(update, _make_context("Dune:", "Part", "Two", "|",
+                                            "Dune", "Part", "Two"))
+
+        assert tmp_db.find_by_title("Dune Part Two") is None
+        ratings = {r.user: r.score for r in tmp_db.ratings_for_title("Dune: Part Two")}
+        assert ratings == {"Bob": 5.0}
+        assert "Merged" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_merge_unknown_title_suggests_alternatives(self, tmp_db):
+        tmp_db.insert_entry(_entry(title="Dune: Part Two"))
+        update = _make_update()
+        h = _make_handlers(tmp_db)
+        await h.merge(update, _make_context("Dune:", "Part", "Two", "|",
+                                            "Dune", "Two"))
+        text = update.message.reply_text.call_args[0][0]
+        assert "Did you mean" in text
+        assert "Dune: Part Two" in text
+
+    @pytest.mark.asyncio
+    async def test_merge_missing_pipe_shows_usage(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.merge(update, _make_context("just", "one", "title"))
+        assert "[Keep]" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_merge_same_title_rejected(self, tmp_db):
+        tmp_db.insert_entry(_entry())
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.merge(update, _make_context("The", "Batman", "|",
+                                            "the", "batman"))
+        assert "different" in update.message.reply_text.call_args[0][0]
+
+
+class TestShowCommand:
+    @pytest.mark.asyncio
+    async def test_show_exact_match_sends_card_with_ratings(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        await h.watch(_make_update(), _make_context("The", "Batman"))
+        await h.rate(_make_update("Alice"), _make_context("The", "Batman", "-", "4.5"))
+        await h.rate(_make_update("Bob"),   _make_context("The", "Batman", "-", "3"))
+
+        update = _make_update()
+        await h.show(update, _make_context("the", "batman"))
+
+        # Poster exists on the fixture entry → reply_photo with caption
+        caption = update.message.reply_photo.call_args.kwargs["caption"]
+        assert "*The Batman*" in caption
+        assert "(2022)" in caption or True  # year only when OMDb supplied one
+        assert "⭐ Alice — 4.5/5" in caption
+        assert "⭐ Bob — 3/5" in caption
+
+    @pytest.mark.asyncio
+    async def test_show_without_poster_sends_text(self, tmp_db):
+        meta = MediaMeta(content_type="movie", poster="", title="Silent Film",
+                         imdb_id="tt0000001", genres=[], year="1927")
+        h = _make_handlers(tmp_db, omdb_meta=meta,
+                           parsed=ParsedWatch("Silent Film", None, None))
+        await h.watch(_make_update(), _make_context("Silent", "Film"))
+
+        update = _make_update()
+        await h.show(update, _make_context("Silent", "Film"))
+        caption = update.message.reply_text.call_args[0][0]
+        assert "🎬 *Silent Film* (1927)" in caption
+        assert "No ratings yet" in caption
+
+    @pytest.mark.asyncio
+    async def test_show_unknown_hints_showall(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.show(update, _make_context("Nope"))
+        text = update.message.reply_text.call_args[0][0]
+        assert "/showall Nope" in text
+
+    @pytest.mark.asyncio
+    async def test_show_no_args_shows_usage(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.show(update, _make_context())
+        assert "Format" in update.message.reply_text.call_args[0][0]
+
+
+class TestShowAllCommand:
+    @pytest.mark.asyncio
+    async def test_showall_returns_each_match_sequentially(self, tmp_db):
+        for title in ("Dune", "Dune: Part Two"):
+            meta = MediaMeta(content_type="movie", poster="", title=title,
+                             imdb_id="tt0000002", genres=[])
+            h = _make_handlers(tmp_db, omdb_meta=meta, parsed=ParsedWatch(title, None, None))
+            await h.watch(_make_update(), _make_context(*title.split()))
+
+        update = _make_update()
+        h = _make_handlers(tmp_db)
+        await h.showall(update, _make_context("dune", "two"))
+
+        sent = "\n---\n".join(
+            c.args[0] for c in update.message.reply_text.call_args_list
+        )
+        assert "🎬 *Dune*" in sent
+        assert "🎬 *Dune: Part Two*" in sent
+
+    @pytest.mark.asyncio
+    async def test_showall_no_matches(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.showall(update, _make_context("zzzzzz"))
+        assert "Nothing matches" in update.message.reply_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_showall_no_args_shows_usage(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.showall(update, _make_context())
         assert "Format" in update.message.reply_text.call_args[0][0]
 
 

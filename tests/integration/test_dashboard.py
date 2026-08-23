@@ -117,6 +117,25 @@ class TestApiEntries:
         assert entry["actors"] == ["Leonardo DiCaprio"]
         assert entry["director"] == "Christopher Nolan"
 
+
+class TestApiDuplicates:
+    def test_returns_similar_pair(self, client):
+        tc, db = client
+        db.insert_entry(_entry("The Batman"))
+        db.insert_entry(_entry("Batman The"))
+        data = tc.get("/api/duplicates").json()
+        assert len(data) == 1
+        titles = {data[0]["keep"]["title"], data[0]["duplicate"]["title"]}
+        assert titles == {"The Batman", "Batman The"}
+        # Older entry suggested as canonical survivor
+        assert data[0]["keep"]["title"] == "The Batman"
+
+    def test_no_duplicates_returns_empty(self, client):
+        tc, db = client
+        db.insert_entry(_entry("Dune"))
+        db.insert_entry(_entry("Interstellar"))
+        assert tc.get("/api/duplicates").json() == []
+
     def test_includes_ratings_and_avg(self, client):
         tc, db = client
         db.insert_entry(_entry("Dune"))

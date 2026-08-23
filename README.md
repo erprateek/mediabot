@@ -62,6 +62,19 @@ python main.py
 
 The FastAPI dashboard will be at `http://localhost:8000`
 
+## Bot Commands
+
+| Command | Purpose |
+|---|---|
+| `/watch <free-form text>` | Log a title; Ollama parses title + optional rating (`/watch just finished Dune, 4.5/5`) |
+| `/rate [Title] - [0-5]` | Rate a logged title; also accepts `9/10` and `3/5` forms |
+| `/show [Title]` | Exact-match lookup: poster, year, one rating line per user |
+| `/showall [Query]` | Same card for every fuzzy match, sent sequentially |
+| `/remove [Title]` | Delete a title (and its ratings) |
+| `/merge [Keep] \| [Remove]` | Fold a duplicate into the canonical title, moving ratings |
+
+Likely duplicate pairs are also exposed at `GET /api/duplicates`.
+
 ### 4. Run tests
 
 ```bash

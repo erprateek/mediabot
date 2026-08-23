@@ -16,6 +16,16 @@ Commands
 
 /remove [Title]           — delete a title (and its ratings) from the
                             dashboard, e.g. when it was parsed incorrectly.
+
+/merge [Keep] | [Remove]  — merge a duplicate title into the canonical
+                            one, moving its ratings. e.g.
+                            /merge Dune: Part Two | Dune Part Two
+
+/show [Title]             — exact-match lookup: poster, year and one
+                            rating per user.
+
+/showall [Query]          — same info for every fuzzy match, sent
+                            sequentially.
 """
 
 import asyncio
@@ -156,6 +166,7 @@ class BotHandlers:
             imdb_id=meta.imdb_id or "",
             platforms=platforms,
             genres=genres_str,
+            year=meta.year,
             plot=meta.plot,
             actors=",".join(meta.actors),
             director=meta.director,
@@ -308,7 +319,173 @@ class BotHandlers:
             )
 
 
+    # ------------------------------------------------------------------ #
+    # /show, /showall — look up logged titles                              #
+    # ------------------------------------------------------------------ #
+
+    async def _send_title_card(self, update: Update, entry: WatchEntry) -> None:
+        """Poster + title (year) + one rating line per user."""
+        if update.message is None:
+            return
+        ratings = await asyncio.to_thread(self.db.ratings_for_title, entry.title)
+
+        header = f"🎬 *{entry.title}*"
+        if entry.year:
+            header += f" ({entry.year})"
+        if ratings:
+            rating_lines = "\n".join(
+                f"⭐ {r.user} — {r.score:g}/5" for r in ratings
+            )
+        else:
+            rating_lines = "_No ratings yet._"
+
+        caption = f"{header}\n\n{rating_lines}"
+
+        if entry.poster:
+            try:
+                await update.message.reply_photo(
+                    photo=entry.poster, caption=caption, parse_mode="Markdown"
+                )
+                return
+            except Exception:
+                logger.warning("Poster fetch failed for '%s'", entry.title)
+        await update.message.reply_text(caption, parse_mode="Markdown")
+
+    async def show(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None:
+            return
+
+        query = " ".join(context.args or [])
+        if not query:
+            await update.message.reply_text(
+                "Format: `/show [Title]`\nExample: `/show The Batman`\n\n"
+                "Fuzzy search instead: `/showall dune`",
+                parse_mode="Markdown",
+            )
+            return
+
+        entry = await asyncio.to_thread(self.db.find_by_title, query)
+        if entry is None:
+            await update.message.reply_text(
+                f"*{query}* isn't on the dashboard.\n"
+                f"Fuzzy search: `/showall {query}`",
+                parse_mode="Markdown",
+            )
+            return
+
+        await self._send_title_card(update, entry)
+
+    async def showall(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None:
+            return
+
+        query = " ".join(context.args or [])
+        if not query:
+            await update.message.reply_text(
+                "Format: `/showall [Query]`\nExample: `/showall dune`",
+                parse_mode="Markdown",
+            )
+            return
+
+        candidates = await asyncio.to_thread(
+            self.db.find_candidates, query,
+            min_ratio=0.6, limit=10,
+        )
+        if not candidates:
+            await update.message.reply_text(
+                f"Nothing matches *{query}*.",
+                parse_mode="Markdown",
+            )
+            return
+
+        for entry, _ratio in candidates:
+            await self._send_title_card(update, entry)
+
+    # ------------------------------------------------------------------ #
+    # /merge — fold a duplicate title into the canonical one               #
+    # ------------------------------------------------------------------ #
+
+    async def _resolve_or_suggest(self, update: Update, query: str) -> WatchEntry | None:
+        """Find a logged title, or reply with fuzzy suggestions."""
+        if update.message is None:
+            return None
+        entry = await asyncio.to_thread(self.db.find_by_title, query)
+        if entry is not None:
+            return entry
+
+        candidates = await asyncio.to_thread(self.db.find_candidates, query)
+        if candidates:
+            listing = "\n".join(f"  • {e.title}" for e, _ in candidates)
+            await update.message.reply_text(
+                f"*{query}* doesn't match a logged title.\nDid you mean:\n{listing}",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                f"*{query}* isn't on the dashboard.",
+                parse_mode="Markdown",
+            )
+        return None
+
+    async def merge(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None:
+            return
+
+        text = " ".join(context.args or [])
+
+        if "|" not in text:
+            await update.message.reply_text(
+                "Merge a duplicate into the real title:\n"
+                "`/merge [Keep] | [Remove]`\n\n"
+                "Example: `/merge Dune: Part Two | Dune Part Two`",
+                parse_mode="Markdown",
+            )
+            return
+
+        keep_q, dup_q = (part.strip() for part in text.split("|", 1))
+        if not keep_q or not dup_q:
+            await update.message.reply_text(
+                "Both sides are needed:\n`/merge [Keep] | [Remove]`",
+                parse_mode="Markdown",
+            )
+            return
+
+        keep = await self._resolve_or_suggest(update, keep_q)
+        if keep is None:
+            return
+        dup = await self._resolve_or_suggest(update, dup_q)
+        if dup is None:
+            return
+
+        if keep.id is None or dup.id is None or keep.id == dup.id:
+            await update.message.reply_text(
+                "Pick two *different* titles.", parse_mode="Markdown"
+            )
+            return
+
+        result = await asyncio.to_thread(
+            self.db.merge_entries, keep.id, dup.id
+        )
+        if result is None:
+            await update.message.reply_text("Merge failed — try again.")
+            return
+
+        logger.info(
+            "Merged '%s' into '%s' (%s ratings moved)",
+            result["removed_title"], result["kept_title"], result["moved_ratings"],
+        )
+        await update.message.reply_text(
+            f"🔗 Merged *{result['removed_title']}* into "
+            f"*{result['kept_title']}*\n"
+            f"{result['moved_ratings']} rating(s) moved.",
+            parse_mode="Markdown",
+        )
+
+
 def register_handlers(app: Application, handlers: BotHandlers) -> None:
     app.add_handler(CommandHandler("watch", handlers.watch))
     app.add_handler(CommandHandler("rate",  handlers.rate))
     app.add_handler(CommandHandler("remove", handlers.remove))
+    app.add_handler(CommandHandler("merge", handlers.merge))
+    app.add_handler(CommandHandler("show", handlers.show))
+    app.add_handler(CommandHandler("showall", handlers.showall))

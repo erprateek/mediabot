@@ -104,6 +104,7 @@ def _entry_to_dict(re: RatedEntry) -> dict:
         "content_type": e.content_type,
         "platforms":    platforms,
         "genres":       _parse_list(e.genres),
+        "year":         e.year,
         "ratings":      ratings_payload,
         "added_by":     e.user,
         "date":         e.date,
@@ -174,6 +175,11 @@ def create_app(db: Database) -> FastAPI:
     async def api_entries() -> list[dict]:
         rated_entries = await asyncio.to_thread(db.all_rated_entries)
         return [_entry_to_dict(re) for re in rated_entries]
+
+    @app.get("/api/duplicates")
+    async def api_duplicates() -> list[dict]:
+        """Likely duplicate titles (fuzzy-matched pairs) for cleanup."""
+        return await asyncio.to_thread(db.duplicate_candidates)
 
     @app.get("/health")
     async def health() -> dict:

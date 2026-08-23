@@ -20,6 +20,7 @@ class MediaMeta:
     title: str
     imdb_id: str | None
     genres: list[str] = field(default_factory=list)  # e.g. ['Action', 'Drama']
+    year: str = ""                                   # e.g. '2022'
     plot: str = ""
     actors: list[str] = field(default_factory=list)  # e.g. ['Robert Pattinson', ...]
     director: str = ""
@@ -76,6 +77,7 @@ class OmdbClient:
                     title=data.get("Title", title_query),
                     imdb_id=data.get("imdbID"),
                     genres=genres,
+                    year=_clean(data.get("Year")),
                     plot=_clean(data.get("Plot")),
                     actors=actors,
                     director=_clean(data.get("Director")),

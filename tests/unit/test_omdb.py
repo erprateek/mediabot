@@ -28,11 +28,17 @@ class TestOmdbClient:
     def test_movie_returned_correctly(self):
         meta = _client({"Response":"True","Type":"movie","Title":"The Batman",
                          "Poster":"https://example.com/p.jpg","imdbID":"tt1877830",
-                         "Genre":"Action, Crime"}).fetch("batman")
+                         "Genre":"Action, Crime", "Year": "2022"}).fetch("batman")
         assert meta.content_type == "movie"
         assert meta.title == "The Batman"
         assert meta.imdb_id == "tt1877830"
         assert meta.genres == ["Action", "Crime"]
+        assert meta.year == "2022"
+
+    def test_na_year_normalised(self):
+        meta = _client({"Response":"True","Type":"movie","Title":"Old Film",
+                         "Poster":"","imdbID":"tt0000003","Year":"N/A"}).fetch("old film")
+        assert meta.year == ""
 
     def test_series_mapped_to_tv(self):
         meta = _client({

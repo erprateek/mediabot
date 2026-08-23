@@ -13,15 +13,17 @@ ratings table to watch_logs by title match and backs up the DB file first.
 
 import logging
 import os
+import re
 import shutil
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 @dataclass
@@ -34,6 +36,7 @@ class WatchEntry:
     imdb_id: str
     platforms: str      # comma-separated, e.g. "Netflix,Hulu"
     genres: str         # comma-separated, e.g. "Action,Drama"
+    year: str = ""      # release year, e.g. '2022'
     plot: str = ""      # OMDb synopsis
     actors: str = ""    # comma-separated cast
     director: str = ""
@@ -85,6 +88,7 @@ class Database:
                     imdb_id       TEXT             DEFAULT '',
                     platforms     TEXT             DEFAULT '',
                     genres        TEXT             DEFAULT '',
+                    year          TEXT             DEFAULT '',
                     plot          TEXT             DEFAULT '',
                     actors        TEXT             DEFAULT '',
                     director      TEXT             DEFAULT ''
@@ -95,6 +99,8 @@ class Database:
                 self._migrate_to_v2(conn)
             if version < 3:
                 self._migrate_to_v3(conn)
+            if version < 4:
+                self._migrate_to_v4(conn)
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     @staticmethod
@@ -181,6 +187,12 @@ class Database:
                     f"ALTER TABLE watch_logs ADD COLUMN {col} TEXT DEFAULT ''"
                 )
 
+    def _migrate_to_v4(self, conn: sqlite3.Connection) -> None:
+        """v4: add release-year column."""
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(watch_logs)")]
+        if "year" not in cols:
+            conn.execute("ALTER TABLE watch_logs ADD COLUMN year TEXT DEFAULT ''")
+
     @contextmanager
     def _conn(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self.db_file)
@@ -206,12 +218,12 @@ class Database:
             cursor = conn.execute("""
                 INSERT OR IGNORE INTO watch_logs
                     (user, title, date, content_type, poster, imdb_id,
-                     platforms, genres, plot, actors, director)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     platforms, genres, year, plot, actors, director)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 entry.user, entry.title, entry.date, entry.content_type,
                 entry.poster, entry.imdb_id, entry.platforms, entry.genres,
-                entry.plot, entry.actors, entry.director,
+                entry.year, entry.plot, entry.actors, entry.director,
             ))
             if cursor.rowcount > 0:
                 return cursor.lastrowid
@@ -267,6 +279,156 @@ class Database:
                 "DELETE FROM watch_logs WHERE id = ?", (entry_id,)
             )
             return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------ #
+    # Merging                                                              #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        """Lowercase, drop punctuation/articles anywhere, collapse whitespace —
+        'The Batman', 'the batman' and 'Batman, The' normalize alike."""
+        t = title.lower()
+        t = re.sub(r"[^\w\s]", " ", t)
+        t = re.sub(r"\b(the|a|an)\b", " ", t)
+        return re.sub(r"\s+", " ", t).strip()
+
+    @classmethod
+    def _title_similarity(cls, a_norm: str, b_norm: str) -> float:
+        """1.0 for identical or word-reordered titles, else char ratio."""
+        if a_norm == b_norm:
+            return 1.0
+        if set(a_norm.split()) == set(b_norm.split()):
+            return 1.0
+        return SequenceMatcher(None, a_norm, b_norm).ratio()
+
+    def find_candidates(
+        self, title: str, *, min_ratio: float = 0.75, limit: int = 3
+    ) -> list[tuple[WatchEntry, float]]:
+        """Fuzzy near-matches for a title among logged entries."""
+        target = self._normalize_title(title)
+        scored = []
+        for entry in self.all_entries():
+            ratio = self._title_similarity(target, self._normalize_title(entry.title))
+            if ratio >= min_ratio:
+                scored.append((entry, round(ratio, 3)))
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return scored[:limit]
+
+    def duplicate_candidates(self, *, min_ratio: float = 0.82) -> list[dict]:
+        """Likely duplicate pairs. 'keep' suggests the OLDER entry
+        (smaller id) as the canonical survivor."""
+        entries = self.all_entries()  # id DESC → a is newer than b
+        pairs = []
+        for i, newer in enumerate(entries):
+            norm_newer = self._normalize_title(newer.title)
+            for older in entries[i + 1:]:
+                norm_older = self._normalize_title(older.title)
+                score = self._title_similarity(norm_newer, norm_older)
+                if score >= min_ratio:
+                    pairs.append({
+                        "keep": {"id": older.id, "title": older.title},
+                        "duplicate": {"id": newer.id, "title": newer.title},
+                        "score": round(score, 3),
+                    })
+        return pairs
+
+    def merge_entries(self, keep_id: int, dup_id: int) -> dict | None:
+        """
+        Merge the duplicate entry into the survivor (single transaction).
+
+        - Ratings move to the survivor; when both hold a rating from the
+          same user the LATEST date wins.
+        - Empty fields on the survivor are filled from the duplicate;
+          genres are unioned (survivor order preserved).
+        - The duplicate row is removed.
+
+        Returns {"kept_title", "removed_title", "moved_ratings"},
+        or None if an id is unknown or both ids match.
+        """
+        if keep_id == dup_id:
+            return None
+
+        with self._conn() as conn:
+            keep = conn.execute(
+                "SELECT * FROM watch_logs WHERE id = ?", (keep_id,)
+            ).fetchone()
+            dup = conn.execute(
+                "SELECT * FROM watch_logs WHERE id = ?", (dup_id,)
+            ).fetchone()
+            if keep is None or dup is None:
+                return None
+
+            moved = 0
+            for rating in conn.execute(
+                "SELECT user, score, date FROM ratings WHERE entry_id = ?",
+                (dup_id,),
+            ).fetchall():
+                existing = conn.execute(
+                    "SELECT score, date FROM ratings "
+                    "WHERE entry_id = ? AND user = ?",
+                    (keep_id, rating["user"]),
+                ).fetchone()
+                if existing is None:
+                    conn.execute(
+                        "INSERT INTO ratings (entry_id, user, score, date) "
+                        "VALUES (?, ?, ?, ?)",
+                        (keep_id, rating["user"], rating["score"], rating["date"]),
+                    )
+                    moved += 1
+                elif rating["date"] >= existing["date"]:
+                    # latest wins
+                    conn.execute(
+                        "UPDATE ratings SET score = ?, date = ? "
+                        "WHERE entry_id = ? AND user = ?",
+                        (rating["score"], rating["date"], keep_id, rating["user"]),
+                    )
+                    moved += 1
+                # else: stale duplicate rating is dropped
+
+            def fill(a: object, b: object) -> object:
+                return a if a else b
+
+            genres = list(
+                dict.fromkeys(
+                    [g for g in (keep["genres"] or "").split(",") if g]
+                    + [g for g in (dup["genres"] or "").split(",") if g]
+                )
+            )
+
+            conn.execute(
+                """
+                UPDATE watch_logs SET
+                    platforms    = ?, genres     = ?, poster   = ?,
+                    imdb_id      = ?, plot       = ?, actors   = ?,
+                    director     = ?, year       = ?, content_type = ?,
+                    date = ?
+                WHERE id = ?
+                """,
+                (
+                    fill(keep["platforms"], dup["platforms"]),
+                    ",".join(genres),
+                    fill(keep["poster"], dup["poster"]),
+                    fill(keep["imdb_id"], dup["imdb_id"]),
+                    fill(keep["plot"], dup["plot"]),
+                    fill(keep["actors"], dup["actors"]),
+                    fill(keep["director"], dup["director"]),
+                    fill(keep["year"], dup["year"]),
+                    fill(keep["content_type"], dup["content_type"]),
+                    min(keep["date"], dup["date"]),  # earliest watch date
+                    keep_id,
+                ),
+            )
+
+            # Anything left on the duplicate goes with it
+            conn.execute("DELETE FROM ratings WHERE entry_id = ?", (dup_id,))
+            conn.execute("DELETE FROM watch_logs WHERE id = ?", (dup_id,))
+
+            return {
+                "kept_title": keep["title"],
+                "removed_title": dup["title"],
+                "moved_ratings": moved,
+            }
 
     # ------------------------------------------------------------------ #
     # Reads                                                                #
@@ -353,6 +515,7 @@ class Database:
             imdb_id=row["imdb_id"],
             platforms=row["platforms"],
             genres=row["genres"] if "genres" in keys else "",
+            year=row["year"] if "year" in keys else "",
             plot=row["plot"] if "plot" in keys else "",
             actors=row["actors"] if "actors" in keys else "",
             director=row["director"] if "director" in keys else "",
