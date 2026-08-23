@@ -72,6 +72,7 @@ The FastAPI dashboard will be at `http://localhost:8000`
 | `/showall [Query]` | Same card for every fuzzy match, sent sequentially |
 | `/remove [Title]` | Delete a title (and its ratings) |
 | `/merge [Keep] \| [Remove]` | Fold a duplicate into the canonical title, moving ratings |
+| `/info` | List all commands |
 
 Likely duplicate pairs are also exposed at `GET /api/duplicates`.
 

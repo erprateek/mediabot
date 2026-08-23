@@ -219,6 +219,18 @@ class TestRemoveCommand:
         assert "Format" in update.message.reply_text.call_args[0][0]
 
 
+class TestInfoCommand:
+    @pytest.mark.asyncio
+    async def test_info_lists_every_command(self, tmp_db):
+        h = _make_handlers(tmp_db)
+        update = _make_update()
+        await h.info(update, _make_context())
+        text = update.message.reply_text.call_args[0][0]
+        for cmd in ("/watch", "/rate", "/show", "/showall",
+                    "/remove", "/merge", "/info"):
+            assert cmd in text, f"missing {cmd} in info output"
+
+
 class TestMergeCommand:
     @pytest.mark.asyncio
     async def test_merge_moves_ratings(self, tmp_db):

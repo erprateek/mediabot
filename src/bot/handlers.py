@@ -26,6 +26,8 @@ Commands
 
 /showall [Query]          — same info for every fuzzy match, sent
                             sequentially.
+
+/info                     — list all available commands.
 """
 
 import asyncio
@@ -402,6 +404,30 @@ class BotHandlers:
             await self._send_title_card(update, entry)
 
     # ------------------------------------------------------------------ #
+    # /info — command reference                                            #
+    # ------------------------------------------------------------------ #
+
+    async def info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None:
+            return
+
+        await update.message.reply_text(
+            "🤖 *MediaBot — commands*\n\n"
+            "`/watch <free-form text>` — log a title; I parse the name "
+            "and any rating from natural text\n"
+            "  _e.g. /watch just finished Dune, solid 4/5_\n\n"
+            "`/rate [Title] - [0-5]` — rate a logged title "
+            "(also accepts `9/10`, `3/5`)\n\n"
+            "`/show [Title]` — exact-match card: poster, year, ratings\n\n"
+            "`/showall [Query]` — the same card for every fuzzy match\n\n"
+            "`/remove [Title]` — delete a title and its ratings\n\n"
+            "`/merge [Keep] | [Remove]` — fold a duplicate into the "
+            "canonical title, moving its ratings\n\n"
+            "`/info` — show this list",
+            parse_mode="Markdown",
+        )
+
+    # ------------------------------------------------------------------ #
     # /merge — fold a duplicate title into the canonical one               #
     # ------------------------------------------------------------------ #
 
@@ -489,3 +515,4 @@ def register_handlers(app: Application, handlers: BotHandlers) -> None:
     app.add_handler(CommandHandler("merge", handlers.merge))
     app.add_handler(CommandHandler("show", handlers.show))
     app.add_handler(CommandHandler("showall", handlers.showall))
+    app.add_handler(CommandHandler("info", handlers.info))
