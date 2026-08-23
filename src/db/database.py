@@ -15,9 +15,9 @@ import logging
 import os
 import shutil
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Generator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class WatchEntry:
     imdb_id: str
     platforms: str      # comma-separated, e.g. "Netflix,Hulu"
     genres: str         # comma-separated, e.g. "Action,Drama"
-    id: Optional[int] = None
+    id: int | None = None
 
 
 @dataclass
@@ -43,8 +43,8 @@ class Rating:
     user: str
     score: float        # 0.0 – 5.0
     date: str
-    id: Optional[int] = None
-    entry_id: Optional[int] = None
+    id: int | None = None
+    entry_id: int | None = None
 
 
 @dataclass
@@ -54,7 +54,7 @@ class RatedEntry:
     ratings: list[Rating] = field(default_factory=list)
 
     @property
-    def avg_score(self) -> Optional[float]:
+    def avg_score(self) -> float | None:
         if not self.ratings:
             return None
         return round(sum(r.score for r in self.ratings) / len(self.ratings), 2)
@@ -178,7 +178,7 @@ class Database:
     # Writes                                                               #
     # ------------------------------------------------------------------ #
 
-    def insert_entry(self, entry: WatchEntry) -> Optional[int]:
+    def insert_entry(self, entry: WatchEntry) -> int | None:
         """Insert a new watch entry.
 
         Returns the new row id, or None if the title already existed
@@ -230,7 +230,7 @@ class Database:
     # Reads                                                                #
     # ------------------------------------------------------------------ #
 
-    def find_by_title(self, title: str) -> Optional[WatchEntry]:
+    def find_by_title(self, title: str) -> WatchEntry | None:
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT * FROM watch_logs WHERE LOWER(title) = LOWER(?)", (title,)

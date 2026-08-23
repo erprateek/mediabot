@@ -30,6 +30,15 @@ class Config:
     ollama_model: str = field(
         default_factory=lambda: os.getenv("OLLAMA_MODEL", "gemma4:12b-it-qat")
     )
+    host: str = field(
+        default_factory=lambda: os.getenv("HOST", "0.0.0.0")
+    )
+    port: int = field(
+        default_factory=lambda: int(os.getenv("PORT", "8000"))
+    )
+    watchmode_region: str = field(
+        default_factory=lambda: os.getenv("WATCHMODE_REGION", "US")
+    )
 
     def validate(self) -> None:
         """Raise ValueError if any required key is missing."""

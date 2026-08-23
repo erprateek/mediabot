@@ -20,7 +20,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 import requests
 
@@ -32,8 +31,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ParsedWatch:
     title: str
-    rating: Optional[float]     # 0.0 – 5.0, or None if user didn't mention one
-    comment: Optional[str]
+    rating: float | None     # 0.0 – 5.0, or None if user didn't mention one
+    comment: str | None
 
 
 _SYSTEM_PROMPT = """\
@@ -42,7 +41,8 @@ Your ONLY job is to parse a user's message into a JSON object.
 
 Rules:
 - Extract the movie or TV show title as precisely as possible.
-- If the user mentioned a rating (out of 5, or out of 10 which you convert to /5), extract it as a float between 0 and 5.
+- If the user mentioned a rating (out of 5, or out of 10 converted to /5),
+  extract it as a float between 0 and 5.
 - If no rating is mentioned, set "rating" to null.
 - If the user included a short opinion or comment, put it in "comment", otherwise null.
 - Return ONLY valid JSON. No explanation, no markdown, no code fences.
@@ -70,7 +70,7 @@ class OllamaClient:
         self,
         base_url: str = "http://localhost:11434",
         model: str = "gemma3:12b-it-qat",
-        session: Optional[requests.Session] = None,
+        session: requests.Session | None = None,
         timeout: int = 30,
         retries: int = 3,
         backoff: float = 0.5,
@@ -115,7 +115,9 @@ class OllamaClient:
             return self._parse_response(content, raw_text)
 
         except requests.exceptions.ConnectionError:
-            logger.warning("Ollama connection refused at %s — falling back to raw text", self.base_url)
+            logger.warning(
+                "Ollama connection refused at %s — falling back to raw text", self.base_url
+            )
         except requests.exceptions.Timeout:
             logger.warning("Ollama request timed out after %ss — falling back", self.timeout)
         except Exception as exc:
@@ -155,7 +157,7 @@ class OllamaClient:
             title = fallback_title.strip()
 
         raw_rating = data.get("rating")
-        rating: Optional[float] = None
+        rating: float | None = None
         if raw_rating is not None:
             try:
                 rating = max(0.0, min(5.0, float(raw_rating)))

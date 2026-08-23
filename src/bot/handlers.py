@@ -18,7 +18,6 @@ Commands
 import asyncio
 import logging
 import re
-from typing import Optional
 from datetime import datetime
 
 from telegram import Update
@@ -33,7 +32,7 @@ from src.services.watchmode import WatchmodeClient
 logger = logging.getLogger(__name__)
 
 
-def _parse_rate_text(text: str) -> tuple[str, Optional[float]]:
+def _parse_rate_text(text: str) -> tuple[str, float | None]:
     """
     Parses 'The Batman - 4.5' or 'The Batman - 4'.
     Returns (title, score) or (title, None) if no score found.

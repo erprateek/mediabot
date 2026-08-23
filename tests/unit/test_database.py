@@ -4,8 +4,8 @@ tests/unit/test_database.py
 
 import sqlite3
 from datetime import datetime
-import pytest
-from src.db.database import Database, WatchEntry, Rating
+
+from src.db.database import Database, Rating, WatchEntry
 
 
 def _entry(**overrides) -> WatchEntry:

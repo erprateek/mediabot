@@ -3,11 +3,12 @@ tests/unit/test_handlers.py
 """
 
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
-from src.bot.handlers import _parse_rate_text, BotHandlers
-from src.services.omdb import MediaMeta
+from src.bot.handlers import BotHandlers, _parse_rate_text
 from src.services.ollama import ParsedWatch
+from src.services.omdb import MediaMeta
 
 
 class TestParseRateText:

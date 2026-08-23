@@ -18,7 +18,6 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from src.db.database import Database, RatedEntry
 
-
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -73,12 +72,13 @@ def _picon(name: str) -> dict:
 
 def _entry_to_dict(re: RatedEntry) -> dict:
     e = re.entry
-    ratings = [{"user": r.user, "score": r.score} for r in re.ratings]
-    avg = (
-        round(sum(r["score"] for r in ratings) / len(ratings), 1)
-        if ratings else None
-    )
-    first_user = ratings[0]["user"] if ratings else e.user
+    scores = [r.score for r in re.ratings]
+    users = [r.user for r in re.ratings]
+    ratings_payload = [
+        {"user": u, "score": s} for u, s in zip(users, scores, strict=True)
+    ]
+    avg = round(sum(scores) / len(scores), 1) if scores else None
+    first_user = users[0] if users else e.user
     platforms = _parse_list(e.platforms)
     icons = [_picon(p) for p in platforms]
     return {
@@ -87,7 +87,7 @@ def _entry_to_dict(re: RatedEntry) -> dict:
         "content_type": e.content_type,
         "platforms":    platforms,
         "genres":       _parse_list(e.genres),
-        "ratings":      ratings,
+        "ratings":      ratings_payload,
         "added_by":     e.user,
         "date":         e.date,
         # Render-only fields
@@ -114,7 +114,7 @@ def build_dashboard_html(rated_entries: list[RatedEntry]) -> str:
     tv     = [re for re in rated_entries if re.entry.content_type == "tv"]
 
     all_scores = [r.score for re in rated_entries for r in re.ratings]
-    avg_rating = "{:.1f}".format(sum(all_scores) / len(all_scores)) if all_scores else "—"
+    avg_rating = f"{sum(all_scores) / len(all_scores):.1f}" if all_scores else "—"
 
     movie_dicts = [_entry_to_dict(re) for re in movies]
     tv_dicts    = [_entry_to_dict(re) for re in tv]

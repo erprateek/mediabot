@@ -5,7 +5,6 @@ OMDb API integration — fetches media metadata including genres.
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 import requests
 
@@ -19,14 +18,14 @@ class MediaMeta:
     content_type: str       # 'movie' | 'tv'
     poster: str
     title: str
-    imdb_id: Optional[str]
+    imdb_id: str | None
     genres: list[str] = field(default_factory=list)  # e.g. ['Action', 'Drama']
 
 
 class OmdbClient:
     BASE_URL = "http://www.omdbapi.com/"
 
-    def __init__(self, api_key: str, session: Optional[requests.Session] = None) -> None:
+    def __init__(self, api_key: str, session: requests.Session | None = None) -> None:
         self.api_key = api_key
         self._session = session or requests.Session()
 

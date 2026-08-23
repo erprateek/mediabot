@@ -4,7 +4,6 @@ Watchmode API integration — resolves streaming platform availability.
 """
 
 import logging
-from typing import Optional
 
 import requests
 
@@ -20,20 +19,22 @@ class WatchmodeClient:
     def __init__(
         self,
         api_key: str,
-        session: Optional[requests.Session] = None,
+        session: requests.Session | None = None,
         retries: int = 3,
         backoff: float = 0.5,
+        region: str = "US",
     ) -> None:
         self.api_key = api_key
         self._session = session or requests.Session()
         self.retries = retries
         self.backoff = backoff
+        self.region = region
 
     # ------------------------------------------------------------------ #
     # Public                                                               #
     # ------------------------------------------------------------------ #
 
-    def fetch_platforms(self, imdb_id: Optional[str], title_query: str = "") -> str:
+    def fetch_platforms(self, imdb_id: str | None, title_query: str = "") -> str:
         """
         Returns a raw comma-separated list of platform names, e.g.
           'Netflix,Hulu'
@@ -91,7 +92,7 @@ class WatchmodeClient:
     # Private helpers                                                      #
     # ------------------------------------------------------------------ #
 
-    def _search(self, imdb_id: Optional[str], title_query: str) -> list:
+    def _search(self, imdb_id: str | None, title_query: str) -> list:
         """Runs IMDb-ID search first, falls back to name search."""
         if imdb_id:
             results = self._search_by_imdb_id(imdb_id)
@@ -121,7 +122,7 @@ class WatchmodeClient:
         return self._results_from(data)
 
     @staticmethod
-    def _extract_id(results: list) -> Optional[int]:
+    def _extract_id(results: list) -> int | None:
         for item in results:
             if not isinstance(item, dict):
                 continue
@@ -135,7 +136,7 @@ class WatchmodeClient:
     def _resolve_sources(self, watchmode_id: int) -> str:
         data = self._get_json(
             f"/title/{watchmode_id}/sources/",
-            {"apiKey": self.api_key, "regions": "US"},
+            {"apiKey": self.api_key, "regions": self.region},
         )
 
         if not isinstance(data, list):

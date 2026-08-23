@@ -30,6 +30,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Lint (ruff)
+        run: ruff check src main.py tests
+
+      - name: Type-check (mypy)
+        run: mypy src main.py --ignore-missing-imports
+
       - name: Run tests with coverage
         env:
           # Dummy keys — unit tests mock all HTTP calls

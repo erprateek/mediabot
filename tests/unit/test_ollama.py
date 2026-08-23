@@ -3,10 +3,10 @@ tests/unit/test_ollama.py
 """
 
 from unittest.mock import MagicMock
-import pytest
+
 import requests
 
-from src.services.ollama import OllamaClient, ParsedWatch
+from src.services.ollama import OllamaClient
 
 
 def _make_client(response_text: str = "", raise_exc=None) -> OllamaClient:

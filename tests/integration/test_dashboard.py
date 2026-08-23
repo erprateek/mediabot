@@ -3,11 +3,12 @@ tests/integration/test_dashboard.py
 """
 
 from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.dashboard import create_app, build_dashboard_html
-from src.db.database import Database, WatchEntry, Rating
+from src.api.dashboard import build_dashboard_html, create_app
+from src.db.database import Rating, WatchEntry
 
 
 def _entry(title: str, content_type: str = "movie", genres: str = "Action") -> WatchEntry:

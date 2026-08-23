@@ -88,3 +88,8 @@ See [`scripts/setup_launchd.sh`](scripts/setup_launchd.sh) for full instructions
 | `OMDB_API_KEY` | OMDb API key |
 | `WATCHMODE_API_KEY` | Watchmode API key |
 | `DB_FILE` | SQLite DB path (default: `movies.db`) |
+| `REFRESH_INTERVAL_SECONDS` | Seconds between streaming refreshes (default: `604800` = weekly) |
+| `OLLAMA_BASE_URL` | Ollama server URL (default: `http://localhost:11434`) |
+| `OLLAMA_MODEL` | Local model name (default: `gemma4:12b-it-qat`) |
+| `HOST` / `PORT` | Dashboard bind address (defaults: `0.0.0.0` / `8000`) |
+| `WATCHMODE_REGION` | Streaming sources region (default: `US`) |
