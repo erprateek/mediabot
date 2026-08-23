@@ -6,6 +6,12 @@ Centralized configuration loaded from environment variables.
 import os
 from dataclasses import dataclass, field
 
+from dotenv import load_dotenv
+
+# Populate os.environ from a local .env (if present) BEFORE values are read.
+# Must run at import time — the Config singleton below is built on import.
+load_dotenv()
+
 
 @dataclass(frozen=True)
 class Config:
