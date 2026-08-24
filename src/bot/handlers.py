@@ -15,30 +15,49 @@ Commands
                             e.g. /rate The Batman - 4.5
 """
 
+import asyncio
+import logging
 import re
-from typing import Optional
 from datetime import datetime
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from src.db.database import Database, Rating, WatchEntry
+from src.services.errors import ExternalAPIError
 from src.services.ollama import OllamaClient
 from src.services.omdb import OmdbClient
 from src.services.watchmode import WatchmodeClient
 
+logger = logging.getLogger(__name__)
 
-def _parse_rate_text(text: str) -> tuple[str, Optional[float]]:
+
+def _parse_rate_text(text: str) -> tuple[str, float | None]:
     """
-    Parses 'The Batman - 4.5' or 'The Batman - 4'.
+    Parses a title plus score from any of these forms:
+      'The Batman - 4.5'
+      'Lanterns 8.5/10'
+      'Dune - 9/10'
+      'Movie 3/5'
     Returns (title, score) or (title, None) if no score found.
+    Scores out of 10 are converted to the /5 scale and clamped to 0–5.
     """
-    match = re.search(r"^(.+?)\s*-\s*(\d+(?:\.\d+)?)\s*$", text.strip())
-    if match:
-        score = float(match.group(2))
-        score = max(0.0, min(5.0, score))
-        return match.group(1).strip(), score
-    return text.strip(), None
+    text = text.strip()
+
+    slash = re.search(r"^(.+?)\s*(\d+(?:\.\d+)?)\s*/\s*(10|5)\s*$", text)
+    if slash:
+        value = float(slash.group(2))
+        if slash.group(3) == "10":
+            value /= 2.0
+        title = slash.group(1).strip().rstrip("-").strip()
+        return title, max(0.0, min(5.0, value))
+
+    dash = re.search(r"^(.+?)\s*-\s*(\d+(?:\.\d+)?)\s*$", text)
+    if dash:
+        score = float(dash.group(2))
+        return dash.group(1).strip(), max(0.0, min(5.0, score))
+
+    return text, None
 
 
 class BotHandlers:
@@ -79,24 +98,27 @@ class BotHandlers:
 
         # ── Step 1: Let Ollama parse the free-form text ──────────────────
         await update.message.reply_text("🤔 Parsing…")
-        parsed = self.ollama.parse_watch_message(raw_text)
+        parsed = await asyncio.to_thread(self.ollama.parse_watch_message, raw_text)
 
         # ── Step 2: Fetch metadata from OMDb ─────────────────────────────
-        meta = self.omdb.fetch(parsed.title)
+        meta = await asyncio.to_thread(self.omdb.fetch, parsed.title)
 
         # ── Step 3: Check if title already exists ────────────────────────
-        existing = self.db.find_by_title(meta.title)
+        existing = await asyncio.to_thread(self.db.find_by_title, meta.title)
 
         if existing:
             # Title is already logged — if the user included a rating, just upsert it
             if parsed.rating is not None:
                 now = datetime.now().strftime("%Y-%m-%d %H:%M")
-                self.db.upsert_rating(Rating(
-                    title=existing.title,
-                    user=user,
-                    score=parsed.rating,
-                    date=now,
-                ))
+                await asyncio.to_thread(
+                    self.db.upsert_rating,
+                    Rating(
+                        title=existing.title,
+                        user=user,
+                        score=parsed.rating,
+                        date=now,
+                    ),
+                )
                 stars = "⭐" * round(parsed.rating)
                 await update.message.reply_text(
                     f"{stars} Updated your rating for *{existing.title}*: {parsed.rating}/5",
@@ -111,7 +133,13 @@ class BotHandlers:
             return
 
         # ── Step 4: Fetch streaming platforms ────────────────────────────
-        platforms = self.watchmode.fetch_platforms(meta.imdb_id, meta.title)
+        try:
+            platforms = await asyncio.to_thread(
+                self.watchmode.fetch_platforms, meta.imdb_id, meta.title
+            )
+        except ExternalAPIError:
+            logger.warning("Platform lookup failed for '%s' — leaving blank", meta.title)
+            platforms = ""
         genres_str = ",".join(meta.genres)
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
@@ -126,16 +154,27 @@ class BotHandlers:
             platforms=platforms,
             genres=genres_str,
         )
-        self.db.insert_entry(entry)
+        entry_id = await asyncio.to_thread(self.db.insert_entry, entry)
+        if entry_id is None:
+            # Lost an insert race — another user logged this title first.
+            await update.message.reply_text(
+                f"*{meta.title}* is already on the dashboard!\n"
+                f"To rate it: `/rate {meta.title} - 4.5`",
+                parse_mode="Markdown",
+            )
+            return
 
         # ── Step 6: Upsert rating if one was extracted ────────────────────
         if parsed.rating is not None:
-            self.db.upsert_rating(Rating(
-                title=meta.title,
-                user=user,
-                score=parsed.rating,
-                date=now,
-            ))
+            await asyncio.to_thread(
+                self.db.upsert_rating,
+                Rating(
+                    title=meta.title,
+                    user=user,
+                    score=parsed.rating,
+                    date=now,
+                ),
+            )
 
         # ── Step 7: Reply ─────────────────────────────────────────────────
         type_emoji = "🎬" if meta.content_type == "movie" else "📺"
@@ -191,12 +230,12 @@ class BotHandlers:
 
         if score is None:
             await update.message.reply_text(
-                "Couldn't parse a score.\nFormat: `/rate The Batman - 4.5`",
+                "Couldn't parse a score.\nFormat: `/rate The Batman - 4.5` or `/rate Dune 9/10`",
                 parse_mode="Markdown",
             )
             return
 
-        existing = self.db.find_by_title(title_query)
+        existing = await asyncio.to_thread(self.db.find_by_title, title_query)
         if not existing:
             await update.message.reply_text(
                 f"*{title_query}* isn't on the dashboard yet.\n"
@@ -206,12 +245,15 @@ class BotHandlers:
             return
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self.db.upsert_rating(Rating(
-            title=existing.title,
-            user=user,
-            score=score,
-            date=now,
-        ))
+        await asyncio.to_thread(
+            self.db.upsert_rating,
+            Rating(
+                title=existing.title,
+                user=user,
+                score=score,
+                date=now,
+            ),
+        )
 
         stars = "⭐" * round(score)
         await update.message.reply_text(

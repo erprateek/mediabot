@@ -2,9 +2,10 @@
 tests/unit/test_database.py
 """
 
+import sqlite3
 from datetime import datetime
-import pytest
-from src.db.database import Database, WatchEntry, Rating
+
+from src.db.database import Database, Rating, WatchEntry
 
 
 def _entry(**overrides) -> WatchEntry:
@@ -113,3 +114,97 @@ class TestAllEntriesForRefresh:
         eid, title, imdb_id = rows[0]
         assert title == "Dune"
         assert imdb_id == "tt1160419"
+
+
+class TestRatingIntegrity:
+    def test_upsert_rating_unknown_title_returns_false(self, tmp_db):
+        assert tmp_db.upsert_rating(_rating(title="Ghost Title")) is False
+
+    def test_ratings_carry_entry_id(self, tmp_db):
+        tmp_db.insert_entry(_entry())
+        tmp_db.upsert_rating(_rating())
+        ratings = tmp_db.ratings_for_title("The Batman")
+        entry = tmp_db.find_by_title("The Batman")
+        assert ratings[0].entry_id == entry.id
+
+
+class TestV2Migration:
+    def _make_v1_db(self, path) -> None:
+        """Create a pre-v2 database: old ratings table keyed by title."""
+        conn = sqlite3.connect(path)
+        conn.executescript("""
+            CREATE TABLE watch_logs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user          TEXT    NOT NULL,
+                title         TEXT    NOT NULL UNIQUE,
+                date          TEXT    NOT NULL,
+                content_type  TEXT    NOT NULL DEFAULT 'movie',
+                poster        TEXT             DEFAULT '',
+                imdb_id       TEXT             DEFAULT '',
+                platforms     TEXT             DEFAULT ''
+            );
+            CREATE TABLE ratings (
+                id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT    NOT NULL,
+                user  TEXT    NOT NULL,
+                score REAL    NOT NULL,
+                date  TEXT    NOT NULL,
+                UNIQUE(title, user)
+            );
+            INSERT INTO watch_logs (user, title, date)
+            VALUES ('Alice', 'The Batman', '2024-01-01 10:00');
+            INSERT INTO ratings (title, user, score, date)
+            VALUES ('the batman', 'Alice', 4.5, '2024-01-01 10:05'),
+                   ('Orphan Movie', 'Bob', 3.0, '2024-01-02 09:00');
+        """)
+        conn.commit()
+        conn.close()
+
+    def test_migration_links_and_preserves_ratings(self, tmp_path):
+        db_file = str(tmp_path / "legacy.db")
+        self._make_v1_db(db_file)
+
+        db = Database(db_file=db_file)
+
+        # Schema upgraded
+        conn = sqlite3.connect(db_file)
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(ratings)")]
+        conn.close()
+        assert version == 2
+        assert "entry_id" in cols
+
+        # Matching rating survived and is linked (case-insensitive match)
+        ratings = db.ratings_for_title("THE BATMAN")
+        assert len(ratings) == 1
+        assert ratings[0].score == 4.5
+        entry = db.find_by_title("The Batman")
+        assert ratings[0].entry_id == entry.id
+
+        # Orphaned rating (no matching title) was dropped, not crashed on
+        assert db.all_rated_entries()[0].entry.title == "The Batman"
+
+    def test_migration_creates_backup(self, tmp_path):
+        db_file = str(tmp_path / "legacy.db")
+        self._make_v1_db(db_file)
+        Database(db_file=db_file)
+        import os
+        assert os.path.exists(db_file + ".pre-v2.bak")
+
+    def test_fresh_db_is_at_v2_without_backup(self, tmp_path):
+        db_file = str(tmp_path / "fresh.db")
+        Database(db_file=db_file)
+        import os
+        assert not os.path.exists(db_file + ".pre-v2.bak")
+        conn = sqlite3.connect(db_file)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        conn.close()
+
+    def test_reopening_migrated_db_does_not_remigrate(self, tmp_path):
+        db_file = str(tmp_path / "legacy.db")
+        self._make_v1_db(db_file)
+        first = Database(db_file=db_file)
+        first.upsert_rating(_rating(title="The Batman", user="New", score=2.0))
+        second = Database(db_file=db_file)
+        ratings = second.ratings_for_title("The Batman")
+        assert {r.user for r in ratings} == {"Alice", "New"}

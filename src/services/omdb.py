@@ -3,10 +3,14 @@ src/services/omdb.py
 OMDb API integration — fetches media metadata including genres.
 """
 
+import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 import requests
+
+from src.services.retry import retryable
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -14,16 +18,26 @@ class MediaMeta:
     content_type: str       # 'movie' | 'tv'
     poster: str
     title: str
-    imdb_id: Optional[str]
+    imdb_id: str | None
     genres: list[str] = field(default_factory=list)  # e.g. ['Action', 'Drama']
 
 
 class OmdbClient:
     BASE_URL = "http://www.omdbapi.com/"
 
-    def __init__(self, api_key: str, session: Optional[requests.Session] = None) -> None:
+    def __init__(self, api_key: str, session: requests.Session | None = None) -> None:
         self.api_key = api_key
         self._session = session or requests.Session()
+
+    @retryable()
+    def _request(self, title_query: str) -> dict:
+        resp = self._session.get(
+            self.BASE_URL,
+            params={"t": title_query, "apikey": self.api_key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     def fetch(self, title_query: str) -> MediaMeta:
         """
@@ -31,13 +45,7 @@ class OmdbClient:
         never raises; on any failure returns a safe default.
         """
         try:
-            resp = self._session.get(
-                self.BASE_URL,
-                params={"t": title_query, "apikey": self.api_key},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = self._request(title_query)
 
             if data.get("Response") == "True":
                 content_type = "tv" if data.get("Type") == "series" else "movie"
@@ -58,7 +66,7 @@ class OmdbClient:
                     genres=genres,
                 )
         except Exception as exc:  # pragma: no cover
-            print(f"OMDb error for '{title_query}': {exc}")
+            logger.error("OMDb error for '%s': %s", title_query, exc)
 
         return MediaMeta(
             content_type="movie",

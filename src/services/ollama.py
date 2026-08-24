@@ -17,18 +17,22 @@ Expected JSON schema:
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 import requests
+
+from src.services.retry import call_with_retries
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ParsedWatch:
     title: str
-    rating: Optional[float]     # 0.0 – 5.0, or None if user didn't mention one
-    comment: Optional[str]
+    rating: float | None     # 0.0 – 5.0, or None if user didn't mention one
+    comment: str | None
 
 
 _SYSTEM_PROMPT = """\
@@ -37,7 +41,8 @@ Your ONLY job is to parse a user's message into a JSON object.
 
 Rules:
 - Extract the movie or TV show title as precisely as possible.
-- If the user mentioned a rating (out of 5, or out of 10 which you convert to /5), extract it as a float between 0 and 5.
+- If the user mentioned a rating (out of 5, or out of 10 converted to /5),
+  extract it as a float between 0 and 5.
 - If no rating is mentioned, set "rating" to null.
 - If the user included a short opinion or comment, put it in "comment", otherwise null.
 - Return ONLY valid JSON. No explanation, no markdown, no code fences.
@@ -65,13 +70,40 @@ class OllamaClient:
         self,
         base_url: str = "http://localhost:11434",
         model: str = "gemma3:12b-it-qat",
-        session: Optional[requests.Session] = None,
-        timeout: int = 30,
+        session: requests.Session | None = None,
+        timeout: int = 60,
+        retries: int = 3,
+        backoff: float = 0.5,
+        keep_alive: str = "30m",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.retries = retries
+        self.backoff = backoff
+        self.keep_alive = keep_alive
         self._session = session or requests.Session()
+
+    def _post_chat(self, raw_text: str) -> requests.Response:
+        return self._session.post(
+            f"{self.base_url}/api/chat",
+            json={
+                "model": self.model,
+                "stream": False,
+                "keep_alive": self.keep_alive,
+                "messages": [
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user",   "content": raw_text},
+                ],
+            },
+            timeout=self.timeout,
+        )
+
+    def _chat(self, raw_text: str) -> requests.Response:
+        return call_with_retries(
+            self._post_chat, raw_text,
+            retries=self.retries, backoff=self.backoff,
+        )
 
     def parse_watch_message(self, raw_text: str) -> ParsedWatch:
         """
@@ -80,28 +112,19 @@ class OllamaClient:
         if the model is unavailable or returns unparseable output.
         """
         try:
-            resp = self._session.post(
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": self.model,
-                    "stream": False,
-                    "messages": [
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user",   "content": raw_text},
-                    ],
-                },
-                timeout=self.timeout,
-            )
+            resp = self._chat(raw_text)
             resp.raise_for_status()
             content = resp.json()["message"]["content"].strip()
             return self._parse_response(content, raw_text)
 
         except requests.exceptions.ConnectionError:
-            print(f"[Ollama] Connection refused at {self.base_url} — falling back to raw text")
+            logger.warning(
+                "Ollama connection refused at %s — falling back to raw text", self.base_url
+            )
         except requests.exceptions.Timeout:
-            print(f"[Ollama] Request timed out after {self.timeout}s — falling back")
+            logger.warning("Ollama request timed out after %ss — falling back", self.timeout)
         except Exception as exc:
-            print(f"[Ollama] Unexpected error: {exc} — falling back")
+            logger.error("Ollama unexpected error: %s — falling back", exc)
 
         return ParsedWatch(title=raw_text.strip(), rating=None, comment=None)
 
@@ -123,13 +146,13 @@ class OllamaClient:
         # Find the first {...} block in the response
         brace = re.search(r"\{.*\}", content, re.DOTALL)
         if not brace:
-            print(f"[Ollama] No JSON object found in response: {content!r}")
+            logger.warning("No JSON object found in response: %r", content)
             return ParsedWatch(title=fallback_title.strip(), rating=None, comment=None)
 
         try:
             data = json.loads(brace.group())
         except json.JSONDecodeError as exc:
-            print(f"[Ollama] JSON parse error: {exc} — raw: {brace.group()!r}")
+            logger.warning("JSON parse error: %s — raw: %r", exc, brace.group())
             return ParsedWatch(title=fallback_title.strip(), rating=None, comment=None)
 
         title = str(data.get("title") or fallback_title).strip()
@@ -137,7 +160,7 @@ class OllamaClient:
             title = fallback_title.strip()
 
         raw_rating = data.get("rating")
-        rating: Optional[float] = None
+        rating: float | None = None
         if raw_rating is not None:
             try:
                 rating = max(0.0, min(5.0, float(raw_rating)))

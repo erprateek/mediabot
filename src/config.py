@@ -6,6 +6,12 @@ Centralized configuration loaded from environment variables.
 import os
 from dataclasses import dataclass, field
 
+from dotenv import load_dotenv
+
+# Populate os.environ from a local .env (if present) BEFORE values are read.
+# Must run at import time — the Config singleton below is built on import.
+load_dotenv()
+
 
 @dataclass(frozen=True)
 class Config:
@@ -29,6 +35,21 @@ class Config:
     )
     ollama_model: str = field(
         default_factory=lambda: os.getenv("OLLAMA_MODEL", "gemma4:12b-it-qat")
+    )
+    ollama_timeout: int = field(
+        default_factory=lambda: int(os.getenv("OLLAMA_TIMEOUT", "60"))
+    )
+    ollama_keep_alive: str = field(
+        default_factory=lambda: os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+    )
+    host: str = field(
+        default_factory=lambda: os.getenv("HOST", "0.0.0.0")
+    )
+    port: int = field(
+        default_factory=lambda: int(os.getenv("PORT", "8000"))
+    )
+    watchmode_region: str = field(
+        default_factory=lambda: os.getenv("WATCHMODE_REGION", "US")
     )
 
     def validate(self) -> None:

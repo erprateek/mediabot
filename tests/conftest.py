@@ -1,5 +1,7 @@
 import pytest
+
 from src.db.database import Database
+
 
 @pytest.fixture
 def tmp_db(tmp_path):

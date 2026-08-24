@@ -3,9 +3,10 @@ tests/unit/test_omdb.py
 """
 
 from unittest.mock import MagicMock
-import pytest
+
 import requests
-from src.services.omdb import OmdbClient, MediaMeta
+
+from src.services.omdb import OmdbClient
 
 
 def _mock_session(json_data, raise_exc=None):
@@ -34,8 +35,10 @@ class TestOmdbClient:
         assert meta.genres == ["Action", "Crime"]
 
     def test_series_mapped_to_tv(self):
-        meta = _client({"Response":"True","Type":"series","Title":"Breaking Bad",
-                         "Poster":"","imdbID":"tt0903747","Genre":"Crime, Drama"}).fetch("breaking bad")
+        meta = _client({
+            "Response": "True", "Type": "series", "Title": "Breaking Bad",
+            "Poster": "", "imdbID": "tt0903747", "Genre": "Crime, Drama",
+        }).fetch("breaking bad")
         assert meta.content_type == "tv"
         assert meta.genres == ["Crime", "Drama"]
 

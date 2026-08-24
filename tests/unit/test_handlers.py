@@ -3,11 +3,12 @@ tests/unit/test_handlers.py
 """
 
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
-from src.bot.handlers import _parse_rate_text, BotHandlers
-from src.services.omdb import MediaMeta
+from src.bot.handlers import BotHandlers, _parse_rate_text
 from src.services.ollama import ParsedWatch
+from src.services.omdb import MediaMeta
 
 
 class TestParseRateText:
@@ -27,6 +28,25 @@ class TestParseRateText:
     def test_missing_score_returns_none(self):
         _, score = _parse_rate_text("Interstellar")
         assert score is None
+
+    def test_score_out_of_ten_converted(self):
+        title, score = _parse_rate_text("Lanterns 8.5/10")
+        assert title == "Lanterns"
+        assert score == 4.25
+
+    def test_dash_with_slash_ten(self):
+        title, score = _parse_rate_text("Dune - 9/10")
+        assert title == "Dune"
+        assert score == 4.5
+
+    def test_score_out_of_five(self):
+        title, score = _parse_rate_text("Movie 3/5")
+        assert title == "Movie"
+        assert score == 3.0
+
+    def test_out_of_ten_clamped_to_5(self):
+        _, score = _parse_rate_text("Best Movie Ever 11/10")
+        assert score == 5.0
 
 
 def _make_update(user="Alice"):
