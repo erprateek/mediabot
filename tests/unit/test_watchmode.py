@@ -7,10 +7,11 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
+from src.services.errors import ExternalAPIError
 from src.services.watchmode import WatchmodeClient
 
 
-def _make_client(responses: list) -> WatchmodeClient:
+def _make_client(responses: list, retries: int = 1) -> WatchmodeClient:
     session = MagicMock(spec=requests.Session)
     side_effects = []
     for r in responses:
@@ -22,7 +23,7 @@ def _make_client(responses: list) -> WatchmodeClient:
             resp.json.return_value = r
             side_effects.append(resp)
     session.get.side_effect = side_effects
-    return WatchmodeClient("fake_key", session=session)
+    return WatchmodeClient("fake_key", session=session, retries=retries)
 
 
 class TestFetchPlatforms:
@@ -70,10 +71,30 @@ class TestFetchPlatforms:
         result = client.fetch_platforms("tt0000002")
         assert "Peacock" in result
 
-    def test_network_error_returns_empty_string(self):
+    def test_network_error_raises_external_api_error(self):
         client = _make_client([requests.exceptions.ConnectionError("down")])
-        result = client.fetch_platforms("tt0000003")
-        assert result == ""
+        with pytest.raises(ExternalAPIError):
+            client.fetch_platforms("tt0000003")
+
+    def test_transient_error_retries_then_succeeds(self):
+        # First IMDb search call fails once (retries=2), then succeeds;
+        # followed by the sources call.
+        client = _make_client([
+            requests.exceptions.ConnectionError("blip"),
+            {"title_results": [{"id": 321}]},
+            [{"name": "Netflix", "type": "sub"}],
+        ], retries=2)
+        assert client.fetch_platforms("tt0000123") == "Netflix"
+
+    def test_invalid_json_raises_external_api_error(self):
+        session = MagicMock(spec=requests.Session)
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.side_effect = ValueError("bad json")
+        session.get.return_value = resp
+        client = WatchmodeClient("fake_key", session=session, retries=1)
+        with pytest.raises(ExternalAPIError):
+            client.fetch_platforms("tt0000009")
 
     def test_no_platforms_found_returns_empty_string(self):
         client = _make_client([
@@ -109,3 +130,31 @@ class TestFetchPlatforms:
         result = client.fetch_platforms("tt0000006")
         assert result == "Netflix"
         assert "Amazon" not in result
+
+    def test_addon_channels_filtered_out(self):
+        # Real payload shape for HBO Max content: the primary service plus
+        # channel add-ons riding inside Prime/Hulu.
+        client = _make_client([
+            {"title_results": [{"id": 3171309}]},
+            [
+                {"name": "MAX (Via Amazon Prime)", "type": "sub"},
+                {"name": "HBO Max",                "type": "sub"},
+                {"name": "HBO (Via Hulu)",         "type": "sub"},
+            ],
+        ])
+        assert client.fetch_platforms("tt0000007") == "HBO Max"
+
+    def test_addons_do_not_count_toward_four_cap(self):
+        client = _make_client([
+            {"title_results": [{"id": 444}]},
+            [
+                {"name": "Showtime (Via Prime Video)", "type": "sub"},
+                {"name": "Paramount+ (Via Prime Video)", "type": "sub"},
+                {"name": "Netflix",  "type": "sub"},
+                {"name": "Hulu",     "type": "sub"},
+                {"name": "Disney+",  "type": "sub"},
+                {"name": "Peacock",  "type": "sub"},
+            ],
+        ])
+        result = client.fetch_platforms("tt0000008")
+        assert result == "Netflix,Hulu,Disney+,Peacock"

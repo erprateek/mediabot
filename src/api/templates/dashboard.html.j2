@@ -1,0 +1,177 @@
+{% macro rating_chip(e) -%}
+{%- if e.avg is not none %}★ {{ e.avg }}{% else %}+ rate{% endif -%}
+{%- endmacro %}
+
+{% macro card_meta(e) -%}
+<div class="card-meta">
+  <div class="avatar" style="background:{{ e.avatar_bg }};color:#fff" title="{{ e.first_user }}">{{ e.first_user[0]|upper }}</div>
+  <span class="username">{% if e.ratings|length > 1 %}{{ e.ratings|length }} ratings{% else %}{{ e.first_user }}{% endif %}</span>
+</div>
+{%- endmacro %}
+
+{% macro picon(p, size) -%}
+{%- if p.logo -%}
+<div class="picon" style="width:{{ size }}px;height:{{ size }}px;background:{{ p.bg }};-webkit-mask:url({{ p.logo }}) center / contain no-repeat;mask:url({{ p.logo }}) center / contain no-repeat" title="{{ p.name }}"></div>
+{%- else -%}
+<div class="picon" style="width:{{ size }}px;height:{{ size }}px;background:{{ p.bg }};color:{{ p.fg }}" title="{{ p.name }}">{{ p.label }}</div>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro pstrip(e) -%}
+{% if e.pstrip %}
+<div class="pstrip">
+  {%- for p in e.pstrip.icons %}{{ picon(p, 22) }}{% endfor -%}
+  {% if e.pstrip.more %}<span class="more-count">+{{ e.pstrip.more }}</span>{% endif %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro pbadges(e) -%}
+{% if e.pbadges %}
+<div class="platform-badges">
+  {%- for p in e.pbadges %}
+  <div class="pbadge">{{ picon(p, 15) }}<span>{{ p.name }}</span></div>
+  {% endfor -%}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{% macro card(e, full) -%}
+<div class="card" data-title="{{ e.title }}" data-genres='{{ e.genres|tojson }}' data-platforms='{{ e.platforms|tojson }}' data-avg="{{ e.avg if e.avg is not none else '' }}">
+  <div class="poster">
+    <img src="{{ e.poster or fallback_poster }}" loading="lazy"
+         onerror="this.onerror=null;this.src='{{ fallback_poster }}'">
+    <div class="poster-grad"></div>
+    <div class="rating-chip">{{ rating_chip(e) }}</div>
+  </div>
+  <div class="card-body">
+    <div class="card-title">{{ e.title }}</div>
+    {{ card_meta(e) }}
+    {% if full %}{{ pbadges(e) }}{% else %}{{ pstrip(e) }}{% endif %}
+    {% set max_g = 3 if full else 2 %}
+    <div class="genre-strip">{% for g in e.genres[:max_g] %}<span class="gtag">{{ g }}</span>{% endfor %}</div>
+  </div>
+</div>
+{%- endmacro %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Media Lounge</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- HOME -->
+<div class="page active" id="home">
+  <div class="header-top">
+    <h1 class="site-title">Media <span>Lounge</span></h1>
+    <div class="live-dot"><div class="dot"></div> synced</div>
+  </div>
+  <p class="subtitle">Telegram Group · The Squad</p>
+  <input type="search" id="title-search" class="title-search"
+         placeholder="🔍 Search titles…" autocomplete="off">
+  <div class="stats">
+    <div class="stat stat-click" data-page="movies" role="button" tabindex="0">
+      <div class="stat-val">{{ n_movies }}</div><div class="stat-lbl">Movies</div>
+    </div>
+    <div class="stat stat-click" data-page="tv" role="button" tabindex="0">
+      <div class="stat-val">{{ n_tv }}</div><div class="stat-lbl">TV Shows</div>
+    </div>
+    <div class="stat">
+      <select id="min-rating" aria-label="Minimum rating">
+        <option value="">★ Any</option>
+        <option value="3">★ 3+</option>
+        <option value="4">★ 4+</option>
+        <option value="4.5">★ 4.5+</option>
+      </select>
+      <div class="stat-lbl">Min rating</div>
+    </div>
+  </div>
+  <div class="genre-filter" id="home-genre-filter">
+    <button class="gfbtn active" data-genre="all">All</button>
+    {%- for g in all_genres %}<button class="gfbtn" data-genre="{{ g }}">{{ g }}</button>{% endfor %}
+  </div>
+  {% if all_platforms %}
+  <div class="genre-filter" id="home-platform-filter">
+    <button class="gfbtn pchip active" data-service="all"><span>All services</span></button>
+    {%- for p in all_platforms %}
+    <button class="gfbtn pchip" data-service="{{ p.name }}" title="Streaming on {{ p.name }}">{{ picon(p, 16) }}<span>{{ p.name }}</span></button>
+    {%- endfor %}
+  </div>
+  {% endif %}
+  <div class="section-hd">
+    <h2>Movies</h2>
+    <button class="view-all" data-page="movies">View all →</button>
+  </div>
+  <div class="rail-outer"><div class="rail">
+    {%- if movies %}{% for e in movies %}{{ card(e, full=false) }}{% endfor %}{% else %}<div class='no-data'>Nothing logged yet!</div>{% endif %}
+  </div></div>
+  <div class="section-hd" style="margin-top:.5rem">
+    <h2>TV Shows</h2>
+    <button class="view-all" data-page="tv">View all →</button>
+  </div>
+  <div class="rail-outer"><div class="rail">
+    {%- if tv %}{% for e in tv %}{{ card(e, full=false) }}{% endfor %}{% else %}<div class='no-data'>Nothing logged yet!</div>{% endif %}
+  </div></div>
+</div>
+
+<!-- MOVIES PAGE -->
+<div class="page" id="movies">
+  <button class="back-btn" data-page="home">← Back</button>
+  <h2 class="page-title">All <span>Movies</span></h2>
+  <div class="genre-filter">
+    <button class="gfbtn active" data-genre="all">All</button>
+    {%- for g in movie_genres %}<button class="gfbtn" data-genre="{{ g }}">{{ g }}</button>{% endfor %}
+  </div>
+  <div class="full-grid">
+    {%- if movies %}{% for e in movies %}{{ card(e, full=true) }}{% endfor %}{% else %}<div class='no-data'>Nothing logged yet!</div>{% endif %}
+  </div>
+</div>
+
+<!-- TV PAGE -->
+<div class="page" id="tv">
+  <button class="back-btn" data-page="home">← Back</button>
+  <h2 class="page-title">All <span>TV Shows</span></h2>
+  <div class="genre-filter">
+    <button class="gfbtn active" data-genre="all">All</button>
+    {%- for g in tv_genres %}<button class="gfbtn" data-genre="{{ g }}">{{ g }}</button>{% endfor %}
+  </div>
+  <div class="full-grid">
+    {%- if tv %}{% for e in tv %}{{ card(e, full=true) }}{% endfor %}{% else %}<div class='no-data'>Nothing logged yet!</div>{% endif %}
+  </div>
+</div>
+
+<!-- RATING MODAL -->
+<div id="modal-overlay" role="dialog" aria-modal="true">
+  <div id="modal">
+    <button class="modal-close" aria-label="Close">×</button>
+    <div class="modal-header">
+      <img class="modal-poster" id="modal-poster" src="" alt="">
+      <div class="modal-info">
+        <div class="modal-title"  id="modal-title"></div>
+        <div class="modal-genres" id="modal-genres"></div>
+        <div class="modal-sub">Streaming</div>
+        <div class="modal-platforms" id="modal-platforms"></div>
+        <p class="modal-line" id="modal-director-line"><span class="credit-label">Director</span> <span id="modal-director"></span></p>
+        <p class="modal-line" id="modal-actors-line"><span class="credit-label">Starring</span> <span id="modal-actors"></span></p>
+      </div>
+    </div>
+    <p class="modal-plot" id="modal-plot"></p>
+    <div class="score-block">
+      <div class="big-score" id="modal-score"></div>
+      <div>
+        <div class="stars-row"   id="modal-stars"></div>
+        <div class="score-count" id="modal-count"></div>
+      </div>
+    </div>
+    <div class="bar-rows" id="modal-bars"></div>
+  </div>
+</div>
+
+<script>window.PLATFORMS = {{ platforms_json | safe }};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>

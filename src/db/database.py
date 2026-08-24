@@ -2,16 +2,28 @@
 src/db/database.py
 All SQLite interactions in one place.
 
-Schema
-------
+Schema (v2)
+-----------
 watch_logs  — one row per unique title
-ratings     — one row per (user, title) rating; supports multiple raters per title
+ratings     — one row per (entry, user) rating; FK to watch_logs.id
+
+Migrations are versioned via PRAGMA user_version. v1 → v2 re-links the
+ratings table to watch_logs by title match and backs up the DB file first.
 """
 
+import logging
+import os
+import re
+import shutil
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Generator, Optional
+from difflib import SequenceMatcher
+
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 4
 
 
 @dataclass
@@ -24,16 +36,21 @@ class WatchEntry:
     imdb_id: str
     platforms: str      # comma-separated, e.g. "Netflix,Hulu"
     genres: str         # comma-separated, e.g. "Action,Drama"
-    id: Optional[int] = None
+    year: str = ""      # release year, e.g. '2022'
+    plot: str = ""      # OMDb synopsis
+    actors: str = ""    # comma-separated cast
+    director: str = ""
+    id: int | None = None
 
 
 @dataclass
 class Rating:
-    title: str
+    title: str          # denormalized for display; source of truth is entry_id
     user: str
     score: float        # 0.0 – 5.0
     date: str
-    id: Optional[int] = None
+    id: int | None = None
+    entry_id: int | None = None
 
 
 @dataclass
@@ -43,7 +60,7 @@ class RatedEntry:
     ratings: list[Rating] = field(default_factory=list)
 
     @property
-    def avg_score(self) -> Optional[float]:
+    def avg_score(self) -> float | None:
         if not self.ratings:
             return None
         return round(sum(r.score for r in self.ratings) / len(self.ratings), 2)
@@ -53,6 +70,10 @@ class Database:
     def __init__(self, db_file: str = "movies.db") -> None:
         self.db_file = db_file
         self._init()
+
+    # ------------------------------------------------------------------ #
+    # Schema / migrations                                                  #
+    # ------------------------------------------------------------------ #
 
     def _init(self) -> None:
         with self._conn() as conn:
@@ -66,29 +87,117 @@ class Database:
                     poster        TEXT             DEFAULT '',
                     imdb_id       TEXT             DEFAULT '',
                     platforms     TEXT             DEFAULT '',
-                    genres        TEXT             DEFAULT ''
+                    genres        TEXT             DEFAULT '',
+                    year          TEXT             DEFAULT '',
+                    plot          TEXT             DEFAULT '',
+                    actors        TEXT             DEFAULT '',
+                    director      TEXT             DEFAULT ''
                 )
             """)
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version < 2:
+                self._migrate_to_v2(conn)
+            if version < 3:
+                self._migrate_to_v3(conn)
+            if version < 4:
+                self._migrate_to_v4(conn)
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (name,),
+        ).fetchone() is not None
+
+    def _migrate_to_v2(self, conn: sqlite3.Connection) -> None:
+        """Bring a pre-v2 database up to the entry_id-linked ratings table."""
+        # watch_logs: ensure genres column exists on very old schemas
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(watch_logs)")]
+        if "genres" not in cols:
+            conn.execute("ALTER TABLE watch_logs ADD COLUMN genres TEXT DEFAULT ''")
+
+        if not self._table_exists(conn, "ratings"):
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS ratings (
-                    id    INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT    NOT NULL,
-                    user  TEXT    NOT NULL,
-                    score REAL    NOT NULL,
-                    date  TEXT    NOT NULL,
-                    UNIQUE(title, user)
+                CREATE TABLE ratings (
+                    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    entry_id INTEGER NOT NULL REFERENCES watch_logs(id) ON DELETE CASCADE,
+                    user     TEXT    NOT NULL,
+                    score    REAL    NOT NULL,
+                    date     TEXT    NOT NULL,
+                    UNIQUE(entry_id, user)
                 )
             """)
-            # Migrate: add genres column if upgrading from older schema
-            try:
-                conn.execute("ALTER TABLE watch_logs ADD COLUMN genres TEXT DEFAULT ''")
-            except sqlite3.OperationalError:
-                pass  # column already exists
+            return
+
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(ratings)")]
+        if "entry_id" in cols:
+            return  # already v2-shaped
+
+        # Destructive rebuild — back up the file first.
+        if os.path.exists(self.db_file) and os.path.getsize(self.db_file) > 0:
+            backup_path = self.db_file + ".pre-v2.bak"
+            shutil.copy2(self.db_file, backup_path)
+            logger.info("Backed up database to %s before v2 migration", backup_path)
+
+        old_rows = conn.execute(
+            "SELECT title, user, score, date FROM ratings"
+        ).fetchall()
+        conn.execute("""
+            CREATE TABLE ratings_v2 (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_id INTEGER NOT NULL REFERENCES watch_logs(id) ON DELETE CASCADE,
+                user     TEXT    NOT NULL,
+                score    REAL    NOT NULL,
+                date     TEXT    NOT NULL,
+                UNIQUE(entry_id, user)
+            )
+        """)
+        migrated = 0
+        for row in old_rows:
+            match = conn.execute(
+                "SELECT id FROM watch_logs WHERE LOWER(title) = LOWER(?)",
+                (row["title"],),
+            ).fetchone()
+            if match is None:
+                continue  # orphaned rating — no matching title
+            conn.execute(
+                "INSERT OR IGNORE INTO ratings_v2 (entry_id, user, score, date) "
+                "VALUES (?, ?, ?, ?)",
+                (match["id"], row["user"], row["score"], row["date"]),
+            )
+            migrated += 1
+        conn.execute("DROP TABLE ratings")
+        conn.execute("ALTER TABLE ratings_v2 RENAME TO ratings")
+        logger.info(
+            "Ratings migration v1→v2: %d/%d rows linked to watch_logs",
+            migrated, len(old_rows),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Connection                                                           #
+    # ------------------------------------------------------------------ #
+
+    def _migrate_to_v3(self, conn: sqlite3.Connection) -> None:
+        """v3: add OMDb enrichment columns (plot/actors/director)."""
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(watch_logs)")]
+        for col in ("plot", "actors", "director"):
+            if col not in cols:
+                conn.execute(
+                    f"ALTER TABLE watch_logs ADD COLUMN {col} TEXT DEFAULT ''"
+                )
+
+    def _migrate_to_v4(self, conn: sqlite3.Connection) -> None:
+        """v4: add release-year column."""
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(watch_logs)")]
+        if "year" not in cols:
+            conn.execute("ALTER TABLE watch_logs ADD COLUMN year TEXT DEFAULT ''")
 
     @contextmanager
     def _conn(self) -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(self.db_file)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         try:
             yield conn
             conn.commit()
@@ -99,25 +208,48 @@ class Database:
     # Writes                                                               #
     # ------------------------------------------------------------------ #
 
-    def insert_entry(self, entry: WatchEntry) -> int:
+    def insert_entry(self, entry: WatchEntry) -> int | None:
+        """Insert a new watch entry.
+
+        Returns the new row id, or None if the title already existed
+        (INSERT OR IGNORE skipped the row).
+        """
         with self._conn() as conn:
             cursor = conn.execute("""
                 INSERT OR IGNORE INTO watch_logs
-                    (user, title, date, content_type, poster, imdb_id, platforms, genres)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (user, title, date, content_type, poster, imdb_id,
+                     platforms, genres, year, plot, actors, director)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 entry.user, entry.title, entry.date, entry.content_type,
                 entry.poster, entry.imdb_id, entry.platforms, entry.genres,
+                entry.year, entry.plot, entry.actors, entry.director,
             ))
-            return cursor.lastrowid
+            if cursor.rowcount > 0:
+                return cursor.lastrowid
+            return None
 
-    def upsert_rating(self, rating: Rating) -> None:
+    def upsert_rating(self, rating: Rating) -> bool:
+        """
+        Insert or update a (entry, user) rating. The entry is resolved from
+        rating.title (case-insensitive).
+
+        Returns True if stored, False when no matching watch_logs row exists.
+        """
         with self._conn() as conn:
+            match = conn.execute(
+                "SELECT id FROM watch_logs WHERE LOWER(title) = LOWER(?)",
+                (rating.title,),
+            ).fetchone()
+            if match is None:
+                return False
             conn.execute("""
-                INSERT INTO ratings (title, user, score, date)
+                INSERT INTO ratings (entry_id, user, score, date)
                 VALUES (?, ?, ?, ?)
-                ON CONFLICT(title, user) DO UPDATE SET score=excluded.score, date=excluded.date
-            """, (rating.title, rating.user, rating.score, rating.date))
+                ON CONFLICT(entry_id, user)
+                DO UPDATE SET score=excluded.score, date=excluded.date
+            """, (match["id"], rating.user, rating.score, rating.date))
+            return True
 
     def update_platforms(self, entry_id: int, platforms: str) -> None:
         with self._conn() as conn:
@@ -126,11 +258,256 @@ class Database:
                 (platforms, entry_id),
             )
 
+    def update_metadata(
+        self, entry_id: int, *, plot: str = "", actors: str = "", director: str = ""
+    ) -> None:
+        """Fill OMDb enrichment columns for an existing entry (backfills)."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE watch_logs SET plot = ?, actors = ?, director = ? WHERE id = ?",
+                (plot, actors, director, entry_id),
+            )
+
+    def rename_entry(self, entry_id: int, new_title: str) -> bool:
+        """Rename a logged title in place. Returns True when updated."""
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "UPDATE watch_logs SET title = ? WHERE id = ?",
+                (new_title, entry_id),
+            )
+            return cursor.rowcount > 0
+
+    def apply_omdb(
+        self,
+        entry_id: int,
+        *,
+        poster: str | None = None,
+        genres: str | None = None,
+        year: str | None = None,
+        imdb_id: str | None = None,
+        plot: str | None = None,
+        actors: str | None = None,
+        director: str | None = None,
+        platforms: str | None = None,
+        overwrite: bool = False,
+    ) -> bool:
+        """
+        Merge OMDb-derived fields into an entry.
+
+        Only explicitly provided (non-None) fields are considered; passing
+        a field as None never touches it.
+
+        overwrite=False (default): a provided value only fills an EMPTY
+        column. overwrite=True: provided values replace existing ones —
+        but unprovided fields still stay untouched.
+
+        Returns True when a row was updated.
+        """
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM watch_logs WHERE id = ?", (entry_id,)
+            ).fetchone()
+            if row is None:
+                return False
+
+            provided = {
+                "poster":    poster,
+                "genres":    genres,
+                "year":      year,
+                "imdb_id":   imdb_id,
+                "plot":      plot,
+                "actors":    actors,
+                "director":  director,
+                "platforms": platforms,
+            }
+            provided = {k: v for k, v in provided.items() if v is not None}
+            if not provided:
+                return False
+
+            if overwrite:
+                updates = provided
+            else:
+                updates = {
+                    k: v for k, v in provided.items()
+                    if not (row[k] or "").strip()
+                }
+                if not updates:
+                    return False
+
+            assignments = ", ".join(f"{col} = ?" for col in updates)
+            conn.execute(
+                f"UPDATE watch_logs SET {assignments} WHERE id = ?",
+                (*updates.values(), entry_id),
+            )
+            return True
+
+    def delete_entry(self, entry_id: int) -> bool:
+        """Remove a title entirely. Ratings cascade via FK; also deleted
+        explicitly so removal works even if foreign_keys is unavailable.
+
+        Returns True when a row was deleted."""
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ratings WHERE entry_id = ?", (entry_id,))
+            cursor = conn.execute(
+                "DELETE FROM watch_logs WHERE id = ?", (entry_id,)
+            )
+            return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------ #
+    # Merging                                                              #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        """Lowercase, drop punctuation/articles anywhere, collapse whitespace —
+        'The Batman', 'the batman' and 'Batman, The' normalize alike."""
+        t = title.lower()
+        t = re.sub(r"[^\w\s]", " ", t)
+        t = re.sub(r"\b(the|a|an)\b", " ", t)
+        return re.sub(r"\s+", " ", t).strip()
+
+    @classmethod
+    def _title_similarity(cls, a_norm: str, b_norm: str) -> float:
+        """1.0 for identical or word-reordered titles, else char ratio."""
+        if a_norm == b_norm:
+            return 1.0
+        if set(a_norm.split()) == set(b_norm.split()):
+            return 1.0
+        return SequenceMatcher(None, a_norm, b_norm).ratio()
+
+    def find_candidates(
+        self, title: str, *, min_ratio: float = 0.75, limit: int = 3
+    ) -> list[tuple[WatchEntry, float]]:
+        """Fuzzy near-matches for a title among logged entries."""
+        target = self._normalize_title(title)
+        scored = []
+        for entry in self.all_entries():
+            ratio = self._title_similarity(target, self._normalize_title(entry.title))
+            if ratio >= min_ratio:
+                scored.append((entry, round(ratio, 3)))
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return scored[:limit]
+
+    def duplicate_candidates(self, *, min_ratio: float = 0.82) -> list[dict]:
+        """Likely duplicate pairs. 'keep' suggests the OLDER entry
+        (smaller id) as the canonical survivor."""
+        entries = self.all_entries()  # id DESC → a is newer than b
+        pairs = []
+        for i, newer in enumerate(entries):
+            norm_newer = self._normalize_title(newer.title)
+            for older in entries[i + 1:]:
+                norm_older = self._normalize_title(older.title)
+                score = self._title_similarity(norm_newer, norm_older)
+                if score >= min_ratio:
+                    pairs.append({
+                        "keep": {"id": older.id, "title": older.title},
+                        "duplicate": {"id": newer.id, "title": newer.title},
+                        "score": round(score, 3),
+                    })
+        return pairs
+
+    def merge_entries(self, keep_id: int, dup_id: int) -> dict | None:
+        """
+        Merge the duplicate entry into the survivor (single transaction).
+
+        - Ratings move to the survivor; when both hold a rating from the
+          same user the LATEST date wins.
+        - Empty fields on the survivor are filled from the duplicate;
+          genres are unioned (survivor order preserved).
+        - The duplicate row is removed.
+
+        Returns {"kept_title", "removed_title", "moved_ratings"},
+        or None if an id is unknown or both ids match.
+        """
+        if keep_id == dup_id:
+            return None
+
+        with self._conn() as conn:
+            keep = conn.execute(
+                "SELECT * FROM watch_logs WHERE id = ?", (keep_id,)
+            ).fetchone()
+            dup = conn.execute(
+                "SELECT * FROM watch_logs WHERE id = ?", (dup_id,)
+            ).fetchone()
+            if keep is None or dup is None:
+                return None
+
+            moved = 0
+            for rating in conn.execute(
+                "SELECT user, score, date FROM ratings WHERE entry_id = ?",
+                (dup_id,),
+            ).fetchall():
+                existing = conn.execute(
+                    "SELECT score, date FROM ratings "
+                    "WHERE entry_id = ? AND user = ?",
+                    (keep_id, rating["user"]),
+                ).fetchone()
+                if existing is None:
+                    conn.execute(
+                        "INSERT INTO ratings (entry_id, user, score, date) "
+                        "VALUES (?, ?, ?, ?)",
+                        (keep_id, rating["user"], rating["score"], rating["date"]),
+                    )
+                    moved += 1
+                elif rating["date"] >= existing["date"]:
+                    # latest wins
+                    conn.execute(
+                        "UPDATE ratings SET score = ?, date = ? "
+                        "WHERE entry_id = ? AND user = ?",
+                        (rating["score"], rating["date"], keep_id, rating["user"]),
+                    )
+                    moved += 1
+                # else: stale duplicate rating is dropped
+
+            def fill(a: object, b: object) -> object:
+                return a if a else b
+
+            genres = list(
+                dict.fromkeys(
+                    [g for g in (keep["genres"] or "").split(",") if g]
+                    + [g for g in (dup["genres"] or "").split(",") if g]
+                )
+            )
+
+            conn.execute(
+                """
+                UPDATE watch_logs SET
+                    platforms    = ?, genres     = ?, poster   = ?,
+                    imdb_id      = ?, plot       = ?, actors   = ?,
+                    director     = ?, year       = ?, content_type = ?,
+                    date = ?
+                WHERE id = ?
+                """,
+                (
+                    fill(keep["platforms"], dup["platforms"]),
+                    ",".join(genres),
+                    fill(keep["poster"], dup["poster"]),
+                    fill(keep["imdb_id"], dup["imdb_id"]),
+                    fill(keep["plot"], dup["plot"]),
+                    fill(keep["actors"], dup["actors"]),
+                    fill(keep["director"], dup["director"]),
+                    fill(keep["year"], dup["year"]),
+                    fill(keep["content_type"], dup["content_type"]),
+                    min(keep["date"], dup["date"]),  # earliest watch date
+                    keep_id,
+                ),
+            )
+
+            # Anything left on the duplicate goes with it
+            conn.execute("DELETE FROM ratings WHERE entry_id = ?", (dup_id,))
+            conn.execute("DELETE FROM watch_logs WHERE id = ?", (dup_id,))
+
+            return {
+                "kept_title": keep["title"],
+                "removed_title": dup["title"],
+                "moved_ratings": moved,
+            }
+
     # ------------------------------------------------------------------ #
     # Reads                                                                #
     # ------------------------------------------------------------------ #
 
-    def find_by_title(self, title: str) -> Optional[WatchEntry]:
+    def find_by_title(self, title: str) -> WatchEntry | None:
         with self._conn() as conn:
             row = conn.execute(
                 "SELECT * FROM watch_logs WHERE LOWER(title) = LOWER(?)", (title,)
@@ -148,29 +525,44 @@ class Database:
 
     def all_rated_entries(self) -> list[RatedEntry]:
         """Returns every title with its ratings list attached."""
-        entries = {e.title: RatedEntry(entry=e) for e in self.all_entries()}
         with self._conn() as conn:
-            rows = conn.execute("SELECT * FROM ratings ORDER BY date ASC").fetchall()
+            rows = conn.execute("""
+                SELECT w.*, r.id AS rating_id, r.user AS rating_user,
+                       r.score AS rating_score, r.date AS rating_date,
+                       r.entry_id AS rating_entry_id
+                FROM watch_logs w
+                LEFT JOIN ratings r ON r.entry_id = w.id
+                ORDER BY w.id DESC, r.date ASC
+            """).fetchall()
+
+        entries: dict[int, RatedEntry] = {}
         for row in rows:
-            title = row["title"]
-            if title in entries:
-                entries[title].ratings.append(Rating(
+            wid = row["id"]
+            if wid not in entries:
+                entries[wid] = RatedEntry(entry=self._row_to_entry(row))
+            if row["rating_id"] is not None:
+                entries[wid].ratings.append(Rating(
                     title=row["title"],
-                    user=row["user"],
-                    score=row["score"],
-                    date=row["date"],
-                    id=row["id"],
+                    user=row["rating_user"],
+                    score=row["rating_score"],
+                    date=row["rating_date"],
+                    id=row["rating_id"],
+                    entry_id=row["rating_entry_id"],
                 ))
         return list(entries.values())
 
     def ratings_for_title(self, title: str) -> list[Rating]:
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM ratings WHERE LOWER(title) = LOWER(?) ORDER BY date ASC",
-                (title,)
-            ).fetchall()
-        return [Rating(title=r["title"], user=r["user"], score=r["score"],
-                       date=r["date"], id=r["id"]) for r in rows]
+            rows = conn.execute("""
+                SELECT r.*, w.title AS w_title
+                FROM ratings r
+                JOIN watch_logs w ON r.entry_id = w.id
+                WHERE LOWER(w.title) = LOWER(?)
+                ORDER BY r.date ASC
+            """, (title,)).fetchall()
+        return [Rating(title=r["w_title"], user=r["user"], score=r["score"],
+                       date=r["date"], id=r["id"], entry_id=r["entry_id"])
+                for r in rows]
 
     def all_entries_for_refresh(self) -> list[tuple[int, str, str]]:
         with self._conn() as conn:
@@ -196,4 +588,8 @@ class Database:
             imdb_id=row["imdb_id"],
             platforms=row["platforms"],
             genres=row["genres"] if "genres" in keys else "",
+            year=row["year"] if "year" in keys else "",
+            plot=row["plot"] if "plot" in keys else "",
+            actors=row["actors"] if "actors" in keys else "",
+            director=row["director"] if "director" in keys else "",
         )

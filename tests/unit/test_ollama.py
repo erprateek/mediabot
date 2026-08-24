@@ -3,10 +3,10 @@ tests/unit/test_ollama.py
 """
 
 from unittest.mock import MagicMock
-import pytest
+
 import requests
 
-from src.services.ollama import OllamaClient, ParsedWatch
+from src.services.ollama import OllamaClient
 
 
 def _make_client(response_text: str = "", raise_exc=None) -> OllamaClient:
@@ -18,7 +18,7 @@ def _make_client(response_text: str = "", raise_exc=None) -> OllamaClient:
         resp.raise_for_status.return_value = None
         resp.json.return_value = {"message": {"content": response_text}}
         session.post.return_value = resp
-    return OllamaClient(session=session)
+    return OllamaClient(session=session, retries=1)
 
 
 class TestParseWatchMessage:
