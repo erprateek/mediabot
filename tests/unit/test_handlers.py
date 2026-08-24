@@ -88,6 +88,7 @@ def _make_handlers(db, omdb_meta=None, platforms="Netflix", parsed: ParsedWatch 
         actors=["Robert Pattinson", "Zoë Kravitz"],
         director="Matt Reeves",
     )
+    omdb.fetch_by_id.return_value = None   # default: id lookup misses
     watchmode = MagicMock()
     watchmode.fetch_platforms.return_value = platforms
     ollama = MagicMock()
@@ -232,6 +233,35 @@ class TestInfoCommand:
 
 
 class TestRefreshCommands:
+    @pytest.mark.asyncio
+    async def test_refresh_resolves_via_stored_imdb_id(self, tmp_db):
+        """Title search misses ('Spiderman Brand New Day') but the stored
+        imdb_id resolves exactly — refresh must still succeed, id-first."""
+        h = _make_handlers(tmp_db)
+        await h.watch(_make_update(), _make_context("The", "Batman"))
+        entry = tmp_db.find_by_title("The Batman")
+        h.omdb.fetch.reset_mock()   # ignore the /watch-time title lookup
+
+        h.omdb.fetch.return_value = MediaMeta(
+            content_type="movie", poster="", title="The Batman", imdb_id=None,
+        )  # fuzzy title search now fails
+        h.omdb.fetch_by_id.return_value = MediaMeta(
+            content_type="movie", poster="", title="The Batman",
+            imdb_id=entry.imdb_id, genres=["Action"], year="2026",
+            plot="Fresh plot.", actors=["Robert Pattinson"],
+            director="Matt Reeves",
+        )
+
+        update = _make_update()
+        await h.refresh(update, _make_context("The", "Batman"))
+
+        text = update.message.reply_text.call_args[0][0]
+        assert "Refreshed" in text
+        refreshed = tmp_db.find_by_title("The Batman")
+        assert refreshed.plot == "Fresh plot."
+        assert refreshed.year == "2026"
+        assert h.omdb.fetch.assert_not_called() is None   # id path short-circuits
+
     @pytest.mark.asyncio
     async def test_refresh_updates_metadata_but_keeps_poster(self, tmp_db):
         h = _make_handlers(tmp_db)   # omdb mock returns poster+pLOT for "The Batman"

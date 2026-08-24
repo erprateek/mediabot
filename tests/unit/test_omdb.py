@@ -95,3 +95,25 @@ class TestOmdbClient:
         meta = _client(raise_exc=requests.exceptions.ConnectionError("down")).fetch("title")
         assert meta.imdb_id is None
         assert meta.genres == []
+
+    def test_fetch_by_id_parses_payload(self):
+        client = _client({"Response":"True","Type":"movie",
+                          "Title":"Spider-Man: Brand New Day",
+                          "Poster":"","imdbID":"tt22084616",
+                          "Genre":"Action","Year":"2026"})
+        meta = client.fetch_by_id("tt22084616")
+        assert meta is not None
+        assert meta.imdb_id == "tt22084616"
+        assert meta.title == "Spider-Man: Brand New Day"
+        assert meta.year == "2026"
+        _, kwargs = client._session.get.call_args
+        assert kwargs["params"]["i"] == "tt22084616"   # exact id param, not t=
+        assert "t" not in kwargs["params"]
+
+    def test_fetch_by_id_no_match_returns_none(self):
+        client = _client({"Response":"False","Error":"Incorrect IMDb ID."})
+        assert client.fetch_by_id("tt0000000") is None
+
+    def test_fetch_by_id_network_error_returns_none(self):
+        client = _client(raise_exc=requests.exceptions.ConnectionError("down"))
+        assert client.fetch_by_id("tt1877830") is None

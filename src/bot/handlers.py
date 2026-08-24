@@ -441,10 +441,20 @@ class BotHandlers:
         """
         Refresh one entry: OMDb text metadata (existing poster preserved)
         plus Watchmode platforms. Returns a status string.
+
+        Lookup is imdb-id-first: display titles like 'Spiderman Brand New
+        Day' can miss OMDb's fuzzy title search even though the stored id
+        resolves exactly.
         """
         if entry.id is None:
             return "no OMDb match"
-        meta = await asyncio.to_thread(self.omdb.fetch, entry.title)
+
+        meta = None
+        if entry.imdb_id:
+            meta = await asyncio.to_thread(self.omdb.fetch_by_id, entry.imdb_id)
+        if meta is None or not meta.imdb_id:
+            meta = await asyncio.to_thread(self.omdb.fetch, entry.title)
+
         if meta.imdb_id:
             await asyncio.to_thread(
                 self.db.apply_omdb,

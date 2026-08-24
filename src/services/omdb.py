@@ -48,40 +48,57 @@ class OmdbClient:
         resp.raise_for_status()
         return resp.json()
 
+    @retryable()
+    def _request_by_id(self, imdb_id: str) -> dict:
+        resp = self._session.get(
+            self.BASE_URL,
+            params={"i": imdb_id, "apikey": self.api_key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    @staticmethod
+    def _parse(data: dict, fallback_title: str) -> MediaMeta | None:
+        """Shared OMDb payload parsing. None when OMDb reports no match."""
+        if data.get("Response") != "True":
+            return None
+
+        content_type = "tv" if data.get("Type") == "series" else "movie"
+        poster = _clean(data.get("Poster"))
+        raw_genres = data.get("Genre", "")
+        genres = (
+            [g.strip() for g in raw_genres.split(",") if g.strip()]
+            if _clean(raw_genres)
+            else []
+        )
+        raw_actors = data.get("Actors", "")
+        actors = (
+            [a.strip() for a in raw_actors.split(",") if a.strip()]
+            if _clean(raw_actors)
+            else []
+        )
+        return MediaMeta(
+            content_type=content_type,
+            poster=poster,
+            title=data.get("Title", fallback_title),
+            imdb_id=data.get("imdbID"),
+            genres=genres,
+            year=_clean(data.get("Year")),
+            plot=_clean(data.get("Plot")),
+            actors=actors,
+            director=_clean(data.get("Director")),
+        )
+
     def fetch(self, title_query: str) -> MediaMeta:
         """
         Query OMDb by title. Returns a MediaMeta with best-effort values —
         never raises; on any failure returns a safe default.
         """
         try:
-            data = self._request(title_query)
-
-            if data.get("Response") == "True":
-                content_type = "tv" if data.get("Type") == "series" else "movie"
-                poster = _clean(data.get("Poster"))
-                raw_genres = data.get("Genre", "")
-                genres = (
-                    [g.strip() for g in raw_genres.split(",") if g.strip()]
-                    if _clean(raw_genres)
-                    else []
-                )
-                raw_actors = data.get("Actors", "")
-                actors = (
-                    [a.strip() for a in raw_actors.split(",") if a.strip()]
-                    if _clean(raw_actors)
-                    else []
-                )
-                return MediaMeta(
-                    content_type=content_type,
-                    poster=poster,
-                    title=data.get("Title", title_query),
-                    imdb_id=data.get("imdbID"),
-                    genres=genres,
-                    year=_clean(data.get("Year")),
-                    plot=_clean(data.get("Plot")),
-                    actors=actors,
-                    director=_clean(data.get("Director")),
-                )
+            meta = self._parse(self._request(title_query), title_query)
+            if meta is not None:
+                return meta
         except Exception as exc:  # pragma: no cover
             logger.error("OMDb error for '%s': %s", title_query, exc)
 
@@ -92,3 +109,14 @@ class OmdbClient:
             imdb_id=None,
             genres=[],
         )
+
+    def fetch_by_id(self, imdb_id: str) -> MediaMeta | None:
+        """
+        Exact lookup by IMDb id (e.g. 'tt22084616'). Returns None when the
+        id doesn't resolve or the request fails — never raises.
+        """
+        try:
+            return self._parse(self._request_by_id(imdb_id), imdb_id)
+        except Exception as exc:
+            logger.error("OMDb error for '%s': %s", imdb_id, exc)
+            return None
