@@ -99,8 +99,8 @@ class OmdbClient:
             meta = self._parse(self._request(title_query), title_query)
             if meta is not None:
                 return meta
-        except Exception as exc:  # pragma: no cover
-            logger.error("OMDb error for '%s': %s", title_query, exc)
+        except requests.exceptions.RequestException as exc:  # pragma: no cover
+            logger.error("CRITICAL OMDb lookup failure for '%s' after retries: %s", title_query, exc)
 
         return MediaMeta(
             content_type="movie",
